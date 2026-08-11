@@ -60,7 +60,7 @@ export const INITIAL_EMPRESA_CONFIG: EmpresaConfig = {
   linkMapaLocalizacao: 'https://maps.google.com/?q=Rua+das+Festas,+500+-+Centro,+São+Paulo+-+SP',
   telefoneWhatsapp: '5511999998888',
   nomeRepresentante: 'Juliana Medeiros',
-  logoUrl: '/acervus_core_logo_transparent.png',
+  logoUrl: '/logo.png',
   listVisibility: {
     exibirInventarioPorPadrao: true,
     exibirCategoriasPorPadrao: true,

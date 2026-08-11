@@ -446,34 +446,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
     }
   };
 
-  const handleQuickBypass = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const approvedDev: DispositivoAutorizado = {
-        id: deviceUuid,
-        imei: deviceUuid,
-        nomeDispositivo: `${nomeDispositivo} (Aprovado Auto)`,
-        cnpjEmpresa: cnpj.trim() || empresaConfig.cnpj || '45.678.910/0001-23',
-        usuario: usuario.trim() || empresaConfig.nomeRepresentante || 'Representante Legal',
-        telefone: telefone.trim() || empresaConfig.telefoneWhatsapp || '5511999998888',
-        status: 'APROVADO',
-        dataSolicitacao: Date.now(),
-        dataAtualizacao: Date.now(),
-        ultimoAcesso: Date.now(),
-      };
 
-      await saveDocument('dispositivos_autorizados', deviceUuid, approvedDev);
-      localStorage.setItem(`locadora_biometric_${deviceUuid}`, 'enabled');
-      setHasBiometricRegistered(true);
-      setSuccessMsg('Dispositivo de demonstração aprovado e vinculado com digital!');
-      onAuthenticated(approvedDev, false);
-    } catch (err) {
-      setError('Erro no auto-cadastro de demonstração.');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleFocusScroll = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     setTimeout(() => {
@@ -898,17 +871,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                 </button>
               )}
 
-              {/* Developer Bypass Option (Retained for testing as requested by framework constraints) */}
-              <div className="text-center">
-                <button
-                  type="button"
-                  onClick={handleQuickBypass}
-                  disabled={loading}
-                  className="text-[10px] text-[#71717A] hover:text-[#D4AF37] font-semibold underline cursor-pointer transition-colors"
-                >
-                  [Auto-Aprovar Aparelho de Teste com Biometria]
-                </button>
-              </div>
+
 
             </div>
 
