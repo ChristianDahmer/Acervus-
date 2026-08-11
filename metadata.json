@@ -1,0 +1,6 @@
+{
+  "name": "Acervus",
+  "description": "Sistema de Gestão de Acervo, Reservas, Emissão de Contratos em PDF, Integração WhatsApp e Sincronização de Formulários Web",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 480" width="100%" height="100%">
+  <defs>
+    <!-- Metallic Shield Gradient -->
+    <linearGradient id="shieldBorderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#E2E8F0" />
+      <stop offset="30%" stop-color="#94A3B8" />
+      <stop offset="70%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#1E293B" />
+    </linearGradient>
+
+    <!-- Inner Shield Blue Gradient -->
+    <linearGradient id="innerShieldBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A" stop-opacity="0.95" />
+      <stop offset="50%" stop-color="#0284C7" stop-opacity="0.85" />
+      <stop offset="100%" stop-color="#0369A1" stop-opacity="0.95" />
+    </linearGradient>
+
+    <!-- Cyan Glow Line Gradient -->
+    <linearGradient id="pulseGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="50%" stop-color="#22D3EE" />
+      <stop offset="100%" stop-color="#38BDF8" />
+    </linearGradient>
+
+    <!-- Gold Accent Gradient -->
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FEF08A" />
+      <stop offset="50%" stop-color="#D4AF37" />
+      <stop offset="100%" stop-color="#854D0E" />
+    </linearGradient>
+
+    <!-- Silver Text Gradient -->
+    <linearGradient id="silverText" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="50%" stop-color="#CBD5E1" />
+      <stop offset="100%" stop-color="#64748B" />
+    </linearGradient>
+
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Outer Shield Border (No solid square background, purely transparent outer) -->
+  <path 
+    d="M 200 12 L 370 70 C 370 280 270 420 200 468 C 130 420 30 280 30 70 Z" 
+    fill="url(#innerShieldBg)" 
+    stroke="url(#shieldBorderGrad)" 
+    stroke-width="12" 
+    stroke-linejoin="round"
+  />
+
+  <!-- Secondary Inner Shield Accent Line -->
+  <path 
+    d="M 200 32 L 350 84 C 350 268 258 398 200 442 C 142 398 50 268 50 84 Z" 
+    fill="none" 
+    stroke="#38BDF8" 
+    stroke-opacity="0.4" 
+    stroke-width="3" 
+  />
+
+  <!-- AC Letters Branding -->
+  <g transform="translate(0, -10)">
+    <!-- Letter A -->
+    <path 
+      d="M 105 210 L 165 75 L 198 75 L 235 210 L 202 210 L 190 178 L 140 178 L 130 210 Z M 150 148 L 180 148 L 165 98 Z" 
+      fill="url(#silverText)" 
+      stroke="#1E293B" 
+      stroke-width="2" 
+    />
+    <!-- Letter C -->
+    <path 
+      d="M 298 108 C 285 92 265 82 242 82 C 200 82 170 115 170 160 C 170 205 200 238 242 238 C 268 238 288 226 300 208 L 275 190 C 267 202 255 210 240 210 C 218 210 200 190 200 160 C 200 130 218 110 240 110 C 255 110 266 117 274 128 Z" 
+      fill="url(#silverText)" 
+      stroke="#1E293B" 
+      stroke-width="2" 
+    />
+  </g>
+
+  <!-- Small Overlay Shield Crest with Cyan Pulse/Heartbeat -->
+  <g transform="translate(190, 180)">
+    <path 
+      d="M 100 10 L 175 42 C 175 150 125 210 100 235 C 75 210 25 150 25 42 Z" 
+      fill="#090D16" 
+      stroke="url(#shieldBorderGrad)" 
+      stroke-width="6" 
+    />
+    
+    <!-- Geometric Tech Grid Patterns inside small shield -->
+    <path d="M 50 70 L 150 70 M 60 110 L 140 110 M 70 150 L 130 150" stroke="#0284C7" stroke-opacity="0.3" stroke-width="2" stroke-dasharray="4 4" />
+
+    <!-- Cyan Pulse Line -->
+    <path 
+      d="M 38 110 L 68 110 L 78 85 L 88 135 L 102 65 L 115 125 L 125 110 L 162 110" 
+      fill="none" 
+      stroke="url(#pulseGlow)" 
+      stroke-width="6" 
+      stroke-linecap="round" 
+      stroke-linejoin="round" 
+      filter="url(#glow)"
+    />
+  </g>
+
+  <!-- Fingerprint Tech Emblem Circle at Bottom -->
+  <g transform="translate(200, 380)">
+    <!-- Outer Emblem Circle -->
+    <circle cx="0" cy="0" r="38" fill="#0A0E1A" stroke="url(#goldGrad)" stroke-width="4" />
+    <circle cx="0" cy="0" r="32" fill="none" stroke="#0284C7" stroke-width="2" stroke-dasharray="6 3" />
+    
+    <!-- Fingerprint / Biometric Lines -->
+    <path d="M -16 6 A 18 18 0 0 1 16 6" fill="none" stroke="#38BDF8" stroke-width="2.5" stroke-linecap="round" />
+    <path d="M -22 12 A 24 24 0 0 1 22 12" fill="none" stroke="#38BDF8" stroke-width="2.5" stroke-linecap="round" />
+    <path d="M -10 0 A 10 10 0 0 1 10 0" fill="none" stroke="#38BDF8" stroke-width="2.5" stroke-linecap="round" />
+    <path d="M -4 -6 A 4 4 0 0 1 4 -6" fill="none" stroke="#38BDF8" stroke-width="2.5" stroke-linecap="round" />
+    <circle cx="0" cy="-12" r="2" fill="#D4AF37" />
+  </g>
+</svg>

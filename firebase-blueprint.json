@@ -1,0 +1,95 @@
+{
+  "collections": {
+    "clientes": {
+      "id": "number",
+      "nome": "string",
+      "telefone": "string",
+      "email": "string"
+    },
+    "itens": {
+      "id": "number",
+      "nome": "string",
+      "quantidadeTotal": "number",
+      "precoAluguel": "number",
+      "imageUrl": "string",
+      "categoria": "string",
+      "ultimaManutencao": "number",
+      "frequenciaAlugueisManutencao": "number",
+      "alugueisDesdeManutencao": "number",
+      "statusManutencao": "string",
+      "proximaRevisaoData": "number"
+    },
+    "categorias": {
+      "id": "string",
+      "nome": "string",
+      "descricao": "string",
+      "corHex": "string",
+      "iconeName": "string",
+      "ativo": "boolean"
+    },
+    "reservas": {
+      "id": "string",
+      "reserva": "object",
+      "cliente": "object",
+      "itens": "array",
+      "valorTotal": "number",
+      "diasReserva": "number"
+    },
+    "transacoes": {
+      "id": "string",
+      "tipo": "string",
+      "categoria": "string",
+      "valor": "number",
+      "data": "number",
+      "descricao": "string",
+      "referenciaId": "string",
+      "status": "string"
+    },
+    "manutencoes": {
+      "id": "string",
+      "itemId": "number",
+      "data": "number",
+      "tipo": "string",
+      "custo": "number",
+      "observacao": "string",
+      "responsavel": "string"
+    },
+    "webForms": {
+      "id": "string",
+      "titulo": "string",
+      "criadoEm": "number",
+      "respondido": "boolean",
+      "googleFormUrl": "string",
+      "googleDriveFileId": "string",
+      "itens": "array",
+      "resposta": "object"
+    },
+    "empresaConfig": {
+      "id": "string",
+      "nomeFantasia": "string",
+      "razaoSocial": "string",
+      "cnpj": "string",
+      "enderecoCompleto": "string",
+      "telefoneWhatsapp": "string",
+      "nomeRepresentante": "string",
+      "listVisibility": "object"
+    },
+    "themeConfig": {
+      "id": "string",
+      "primaryColor": "string",
+      "themeMode": "string",
+      "highContrastText": "boolean",
+      "exibirGuiaArquitetura": "boolean"
+    },
+    "dispositivos_autorizados": {
+      "id": "string",
+      "nomeDispositivo": "string",
+      "cnpjEmpresa": "string",
+      "telefone": "string",
+      "status": "string",
+      "dataSolicitacao": "number",
+      "dataAtualizacao": "number",
+      "ultimoAcesso": "number"
+    }
+  }
+}

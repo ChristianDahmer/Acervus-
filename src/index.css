@@ -1,0 +1,345 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --app-primary: #D4AF37;
+    --app-primary-text: #000000;
+    --app-bg: #0A0A0B;
+    --app-surface: #111113;
+    --app-surface-card: #18181B;
+    --app-border: #27272A;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    background-color: var(--app-bg);
+    color: #E4E4E7;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+  
+  h1, h2, h3, .font-serif {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+}
+
+/* Custom scrollbars for theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--app-bg, #0A0A0B);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--app-border, #27272A);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--app-surface-card, #3F3F46);
+}
+
+/* Dynamic theme overrides for system-wide module screens */
+.bg-\[\#0A0A0B\],
+.bg-\[\#0a0a0b\],
+.bg-black {
+  background-color: var(--app-bg) !important;
+}
+
+.bg-\[\#111113\] {
+  background-color: var(--app-surface) !important;
+}
+
+.bg-\[\#18181B\],
+.bg-\[\#18181b\] {
+  background-color: var(--app-surface-card) !important;
+}
+
+.bg-\[\#141416\] {
+  background-color: var(--app-surface) !important;
+}
+
+.border-\[\#27272A\],
+.border-\[\#27272a\],
+.border-\[\#3F3F46\],
+.border-\[\#3f3f46\] {
+  border-color: var(--app-border) !important;
+}
+
+/* Primary color dynamic bindings across all module screens */
+.text-\[\#D4AF37\],
+.text-\[\#d4af37\] {
+  color: var(--app-primary) !important;
+}
+
+.bg-\[\#D4AF37\],
+.bg-\[\#d4af37\] {
+  background-color: var(--app-primary) !important;
+  color: var(--app-primary-text) !important;
+}
+
+.border-\[\#D4AF37\],
+.border-\[\#d4af37\] {
+  border-color: var(--app-primary) !important;
+}
+
+/* Hover and focus states for primary color */
+.hover\:text-\[\#D4AF37\]:hover,
+.hover\:text-\[\#d4af37\]:hover,
+.group:hover .group-hover\:text-\[\#D4AF37\] {
+  color: var(--app-primary) !important;
+}
+
+.hover\:border-\[\#D4AF37\]:hover,
+.hover\:border-\[\#d4af37\]:hover,
+.group:hover .group-hover\:border-\[\#D4AF37\] {
+  border-color: var(--app-primary) !important;
+}
+
+.hover\:bg-\[\#D4AF37\]:hover,
+.hover\:bg-\[\#d4af37\]:hover {
+  background-color: var(--app-primary) !important;
+  color: var(--app-primary-text) !important;
+}
+
+.focus\:border-\[\#D4AF37\]:focus,
+.focus\:border-\[\#d4af37\]:focus {
+  border-color: var(--app-primary) !important;
+}
+
+/* Translucent primary color utilities */
+.bg-\[\#D4AF37\]\/10,
+.bg-\[\#d4af37\]\/10 {
+  background-color: color-mix(in srgb, var(--app-primary) 10%, transparent) !important;
+}
+
+.bg-\[\#D4AF37\]\/20,
+.bg-\[\#d4af37\]\/20 {
+  background-color: color-mix(in srgb, var(--app-primary) 20%, transparent) !important;
+}
+
+.bg-\[\#D4AF37\]\/25,
+.bg-\[\#d4af37\]\/25 {
+  background-color: color-mix(in srgb, var(--app-primary) 25%, transparent) !important;
+}
+
+.bg-\[\#D4AF37\]\/30,
+.bg-\[\#d4af37\]\/30 {
+  background-color: color-mix(in srgb, var(--app-primary) 30%, transparent) !important;
+}
+
+.border-\[\#D4AF37\]\/20,
+.border-\[\#d4af37\]\/20,
+.border-\[\#D4AF37\]\/30,
+.border-\[\#d4af37\]\/30,
+.border-\[\#D4AF37\]\/40,
+.border-\[\#d4af37\]\/40,
+.border-\[\#D4AF37\]\/50,
+.border-\[\#d4af37\]\/50 {
+  border-color: color-mix(in srgb, var(--app-primary) 40%, transparent) !important;
+}
+
+/* Global Print Stylesheet for High Contrast and Paper Layouts */
+@media print {
+  body, #root {
+    background-color: #ffffff !important;
+    color: #111827 !important;
+    background: #ffffff !important;
+  }
+
+  /* Hide interactive application chrome during printing */
+  nav,
+  aside,
+  header,
+  button:not(.printable-button),
+  .no-print,
+  .modal-actions {
+    display: none !important;
+  }
+
+  /* Reset fixed modal containers so they lay out normally on paper */
+  .fixed.inset-0 {
+    position: static !important;
+    background: #ffffff !important;
+    backdrop-filter: none !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .bg-\[\#111113\],
+  .bg-\[\#18181B\],
+  .bg-\[\#0A0A0B\] {
+    background-color: #ffffff !important;
+    color: #111827 !important;
+    border-color: #e5e7eb !important;
+    box-shadow: none !important;
+  }
+
+  /* Force max-height containers to expand fully without scrollbars */
+  .max-h-\[65vh\],
+  .max-h-\[500px\],
+  .max-h-\[600px\],
+  .overflow-y-auto,
+  #printable-area,
+  #printable-contrato,
+  #printable-arch-doc,
+  #printable-relatorio-sintetico {
+    max-height: none !important;
+    overflow: visible !important;
+    height: auto !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+
+  /* High contrast text overrides for print */
+  .text-white,
+  .text-\[\#A1A1AA\],
+  .text-\[\#E4E4E7\],
+  .text-\[\#71717A\] {
+    color: #111827 !important;
+  }
+
+  .text-\[\#D4AF37\] {
+    color: #b45309 !important;
+  }
+
+  /* Table styling for printed output */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  th, td {
+    border: 1px solid #d1d5db !important;
+    color: #111827 !important;
+  }
+
+  th {
+    background-color: #f3f4f6 !important;
+  }
+}
+
+/* --- TACTILE AND MODERN BUTTON FEEDBACK (ANDROID-INSPIRED) --- */
+
+/* Snappy transitions for all buttons & interactive roles */
+button, 
+.interactive-btn,
+[role="button"] {
+  transition: transform 0.1s cubic-bezier(0.4, 0, 0.2, 1), 
+              background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1), 
+              box-shadow 0.15s cubic-bezier(0.4, 0, 0.2, 1), 
+              opacity 0.15s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  position: relative !important;
+  overflow: hidden !important; /* Clips the ripple expanding wave */
+}
+
+/* Active touch state scaling feedback */
+button:active:not(:disabled),
+.interactive-btn:active:not(:disabled),
+[role="button"]:active:not(:disabled) {
+  transform: scale(0.95) !important;
+}
+
+/* Material Design Expanding Ripple wave style */
+.android-ripple {
+  position: absolute;
+  border-radius: 50%;
+  transform: scale(0);
+  animation: ripple-animation 0.5s cubic-bezier(0.1, 0.8, 0.3, 1) forwards;
+  background-color: rgba(255, 255, 255, 0.3);
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Ripple style for buttons with light background colors */
+.android-ripple-dark {
+  background-color: rgba(0, 0, 0, 0.12);
+}
+
+@keyframes ripple-animation {
+  to {
+    transform: scale(4);
+    opacity: 0;
+  }
+}
+
+/* Indeterminate linear progress bar on processing/action buttons */
+.button-processing-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background-color: var(--app-primary, #D4AF37);
+  opacity: 0.9;
+  z-index: 20;
+  overflow: hidden;
+}
+
+.button-processing-bar::after {
+  content: '';
+  position: absolute;
+  left: -50%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
+  animation: bar-indeterminate-animation 0.9s infinite linear;
+}
+
+@keyframes bar-indeterminate-animation {
+  0% {
+    left: -50%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+/* Micro Spinner/Status overlay during active async processes */
+.button-processing-overlay {
+  position: absolute;
+  inset: 0;
+  background-color: rgba(10, 10, 11, 0.85);
+  border-radius: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--app-primary, #D4AF37);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  z-index: 30;
+  animation: fadeInOverlayAnimation 0.15s ease-out forwards;
+}
+
+@keyframes fadeInOverlayAnimation {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Disabled buttons click prevention */
+button:disabled,
+.interactive-btn:disabled {
+  cursor: not-allowed !important;
+  opacity: 0.5 !important;
+  pointer-events: none !important;
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+}
+
+/* Hide scrollbar for IE, Edge and Firefox */
+.no-scrollbar {
+  -ms-overflow-style: none !important;  /* IE and Edge */
+  scrollbar-width: none !important;  /* Firefox */
+}
+
+
+
