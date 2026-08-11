@@ -232,8 +232,12 @@ button,
               background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1), 
               box-shadow 0.15s cubic-bezier(0.4, 0, 0.2, 1), 
               opacity 0.15s cubic-bezier(0.4, 0, 0.2, 1) !important;
-  position: relative !important;
-  overflow: hidden !important; /* Clips the ripple expanding wave */
+}
+
+button:not(.fixed):not(.absolute), 
+.interactive-btn:not(.fixed):not(.absolute),
+[role="button"]:not(.fixed):not(.absolute) {
+  position: relative;
 }
 
 /* Active touch state scaling feedback */

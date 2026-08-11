@@ -184,6 +184,12 @@ export interface PainelConfiguracaoData {
   somBipCheckinCheckout: boolean;
   modoDepuracaoLogs: boolean;
   backupAutoFirestore: boolean;
+  // Configurações do Banco de Dados (Cloud SQL PostgreSQL + Drizzle ORM)
+  dbPoolLimit?: number;
+  dbQueryTimeoutMs?: number;
+  dbLockPessimista?: boolean;
+  dbAutoSyncEnabled?: boolean;
+  dbIsolamentoTenantEstrito?: boolean;
 }
 
 export interface EmpresaConfig {

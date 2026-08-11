@@ -94,17 +94,34 @@ interface BubbleItem {
   isWinner?: boolean;
 }
 
+let globalAudioCtx: AudioContext | null = null;
+
+const getAudioContext = (): AudioContext | null => {
+  try {
+    const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtxClass) return null;
+    if (!globalAudioCtx || globalAudioCtx.state === 'closed') {
+      globalAudioCtx = new AudioCtxClass();
+    }
+    if (globalAudioCtx.state === 'suspended') {
+      globalAudioCtx.resume().catch(() => {});
+    }
+    return globalAudioCtx;
+  } catch (e) {
+    return null;
+  }
+};
+
 const playSynthBeep = (freq = 440, type: OscillatorType = 'sine', duration = 0.12) => {
   try {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
+    const ctx = getAudioContext();
+    if (!ctx) return;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = type;
     osc.frequency.setValueAtTime(freq, ctx.currentTime);
     gain.gain.setValueAtTime(0.12, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    gain.gain.linearRampToValueAtTime(0.001, ctx.currentTime + duration);
     osc.connect(gain);
     gain.connect(ctx.destination);
     osc.start();
@@ -114,159 +131,255 @@ const playSynthBeep = (freq = 440, type: OscillatorType = 'sine', duration = 0.1
   }
 };
 
+// Sintetizador de som de palmas (Applause/Clapping) via Web Audio API
+const playApplauseSound = (duration = 3.8) => {
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+
+    // 1. Som de fundo da multidão com palmas contínuas
+    const bufferSize = Math.floor(ctx.sampleRate * duration);
+    const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      output[i] = (Math.random() * 2 - 1) * 0.5;
+    }
+
+    const crowdSource = ctx.createBufferSource();
+    crowdSource.buffer = noiseBuffer;
+
+    const crowdFilter = ctx.createBiquadFilter();
+    crowdFilter.type = 'bandpass';
+    crowdFilter.frequency.setValueAtTime(1300, now);
+    crowdFilter.Q.setValueAtTime(0.9, now);
+
+    const crowdGain = ctx.createGain();
+    crowdGain.gain.setValueAtTime(0.001, now);
+    crowdGain.gain.linearRampToValueAtTime(0.22, now + 0.25);
+    crowdGain.gain.setValueAtTime(0.22, now + duration - 0.7);
+    crowdGain.gain.linearRampToValueAtTime(0.001, now + duration);
+
+    crowdSource.connect(crowdFilter);
+    crowdFilter.connect(crowdGain);
+    crowdGain.connect(ctx.destination);
+
+    crowdSource.start(now);
+    crowdSource.stop(now + duration);
+
+    // 2. Batidas individuais e sobrepostas de palmas (palma por palma)
+    const shortBuffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.08), ctx.sampleRate);
+    const shortData = shortBuffer.getChannelData(0);
+    for (let i = 0; i < shortData.length; i++) {
+      shortData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.015));
+    }
+
+    const numClaps = 130;
+    for (let i = 0; i < numClaps; i++) {
+      const timeOffset = Math.pow(Math.random(), 0.65) * duration;
+      const startTime = now + timeOffset;
+
+      const clapSource = ctx.createBufferSource();
+      clapSource.buffer = shortBuffer;
+
+      const clapFilter = ctx.createBiquadFilter();
+      clapFilter.type = 'bandpass';
+      clapFilter.frequency.setValueAtTime(1100 + Math.random() * 1500, startTime);
+      clapFilter.Q.setValueAtTime(1.4, startTime);
+
+      const clapGain = ctx.createGain();
+      const vol = 0.15 + Math.random() * 0.18;
+      clapGain.gain.setValueAtTime(vol, startTime);
+      clapGain.gain.linearRampToValueAtTime(0.001, startTime + 0.05);
+
+      clapSource.connect(clapFilter);
+      clapFilter.connect(clapGain);
+      clapGain.connect(ctx.destination);
+
+      clapSource.start(startTime);
+      clapSource.stop(startTime + 0.055);
+    }
+  } catch (e) {
+    console.error('Erro no som de palmas:', e);
+  }
+};
+
 const BouncingBubblesStage: React.FC<{
   tickets: TicketRecord[];
   step: 'idle' | 'fetching' | 'filtering' | 'ticketing' | 'drawing' | 'completed';
   winnerTicket: TicketRecord | null;
   onReplayDraw?: () => void;
   profileImageUrl?: string | null;
-}> = ({ tickets, step, winnerTicket, onReplayDraw, profileImageUrl }) => {
+  postImageUrl?: string;
+}> = ({ tickets, step, winnerTicket, onReplayDraw, profileImageUrl, postImageUrl }) => {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [speed, setSpeed] = useState<number>(0.5);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-  const [bubbles, setBubbles] = useState<BubbleItem[]>([]);
-  const [hoveredBubble, setHoveredBubble] = useState<BubbleItem | null>(null);
-  const [activeHighlightId, setActiveHighlightId] = useState<string | null>(null);
-  const [revealedCount, setRevealedCount] = useState<number>(0);
+  const [hoveredBubble, setHoveredBubble] = useState<TicketRecord | null>(null);
 
-  // Initialize bubbles whenever tickets change or step changes (starting at center for burst effect, emerged one by one in order)
+  // Default post image if not supplied
+  const effectivePostImage = postImageUrl || 'https://images.unsplash.com/photo-1611162617213-7d7a39e9b1d7?w=300&auto=format&fit=crop&q=80';
+
+  // Flying parabola bubbles state
+  interface ActiveParabolaBubble {
+    id: string;
+    ticketNumber: string;
+    username: string;
+    commentText: string;
+    avatarUrl: string;
+    angleDeg: number; // -80 to +80
+    startTime: number;
+    duration: number; // ms
+    maxDistance: number;
+    arcHeight: number;
+  }
+
+  const [activeBubbles, setActiveBubbles] = useState<ActiveParabolaBubble[]>([]);
+  const [commentIndex, setCommentIndex] = useState<number>(0);
+
+  // Confetti rain pieces state for completed state
+  interface ConfettiParticle {
+    id: number;
+    x: number; // % 0-100
+    y: number; // px -20 to 360
+    size: number;
+    color: string;
+    speedY: number;
+    speedX: number;
+    rotation: number;
+    rotationSpeed: number;
+    shape: 'square' | 'strip' | 'circle';
+  }
+
+  const [confetti, setConfetti] = useState<ConfettiParticle[]>([]);
+
+  // Spawn bubbles continuously during drawing phase from center post
   useEffect(() => {
-    if (tickets.length === 0) {
-      setBubbles([]);
-      setRevealedCount(0);
+    if (step !== 'drawing') {
       return;
     }
 
-    // Limit visible bubbles to 32 for crisp performance
-    const sample = tickets.slice(0, 32);
-    const containerWidth = containerRef.current?.clientWidth || 600;
-    const containerHeight = 340;
-    const centerX = containerWidth / 2;
-    const centerY = containerHeight / 2;
+    if (tickets.length === 0) return;
 
-    const initialBubbles: BubbleItem[] = sample.map((t, idx) => {
-      const radius = 26 + (idx % 3) * 4; // 26px to 34px
-      const angle = Math.random() * Math.PI * 2;
-      const speedMag = 2.5 + Math.random() * 3.5;
-      const vx = Math.cos(angle) * speedMag;
-      const vy = Math.sin(angle) * speedMag;
-      return {
-        id: `${t.ticketNumber}-${idx}`,
-        username: t.username,
-        commentText: t.commentText,
-        avatarUrl: t.avatarUrl || AVATAR_IMAGES[idx % AVATAR_IMAGES.length],
-        ticketNumber: t.ticketNumber,
-        x: centerX,
-        y: centerY,
-        vx,
-        vy,
-        radius,
-        isWinner: winnerTicket?.ticketNumber === t.ticketNumber,
-      };
-    });
+    const spawnInterval = Math.max(120, Math.floor(280 / speed));
 
-    setBubbles(initialBubbles);
-    setRevealedCount(0);
-
-    // Stagger emergence one by one in ordered sequence
-    let currentCount = 0;
     const timer = setInterval(() => {
-      currentCount++;
-      setRevealedCount(currentCount);
-      if (currentCount >= sample.length) {
-        clearInterval(timer);
-      }
-    }, 120);
+      setCommentIndex((prevIdx) => {
+        const idx = prevIdx % tickets.length;
+        const ticket = tickets[idx];
+
+        // Generate angle across 180-degree parabola fan (-80° to +80°)
+        const angleFan = [-75, 75, -50, 50, -25, 25, 0, -65, 65, -35, 35, -10, 10];
+        const angleDeg = angleFan[idx % angleFan.length];
+
+        const newBubble: ActiveParabolaBubble = {
+          id: `${ticket.ticketNumber}-${Date.now()}-${Math.random()}`,
+          ticketNumber: ticket.ticketNumber,
+          username: ticket.username,
+          commentText: ticket.commentText,
+          avatarUrl: ticket.avatarUrl || AVATAR_IMAGES[idx % AVATAR_IMAGES.length],
+          angleDeg,
+          startTime: performance.now(),
+          duration: 1600 / speed,
+          maxDistance: 160 + (idx % 4) * 20,
+          arcHeight: 70 + (idx % 3) * 15,
+        };
+
+        setActiveBubbles((prev) => [...prev.slice(-25), newBubble]);
+
+        if (soundEnabled) {
+          playSynthBeep(320 + Math.random() * 300, 'sine', 0.06);
+        }
+
+        return prevIdx + 1;
+      });
+    }, spawnInterval);
 
     return () => clearInterval(timer);
-  }, [tickets, winnerTicket]);
+  }, [step, tickets, speed, soundEnabled]);
 
-  // Physics animation loop
+  // RequestAnimationFrame loop for Parabola flight and Confetti rain
   useEffect(() => {
-    if (bubbles.length === 0) return;
-
     let animId: number;
-    const updatePhysics = () => {
-      setBubbles((prev) => {
-        if (prev.length === 0) return prev;
-        const width = containerRef.current?.clientWidth || 600;
-        const height = 340;
 
-        return prev.map((b) => {
-          // If winner and completed, pull toward center
-          if (step === 'completed' && winnerTicket && b.ticketNumber === winnerTicket.ticketNumber) {
-            const targetX = width / 2;
-            const targetY = height / 2;
-            const newX = b.x + (targetX - b.x) * 0.1;
-            const newY = b.y + (targetY - b.y) * 0.1;
-            return { ...b, x: newX, y: newY, vx: 0, vy: 0 };
-          }
-
-          let nx = b.x + b.vx * speed;
-          let ny = b.y + b.vy * speed;
-          let nvx = b.vx;
-          let nvy = b.vy;
-
-          // Wall collision
-          if (nx - b.radius < 0) {
-            nx = b.radius;
-            nvx = Math.abs(nvx);
-          } else if (nx + b.radius > width) {
-            nx = width - b.radius;
-            nvx = -Math.abs(nvx);
-          }
-
-          if (ny - b.radius < 0) {
-            ny = b.radius;
-            nvy = Math.abs(nvy);
-          } else if (ny + b.radius > height) {
-            ny = height - b.radius;
-            nvy = -Math.abs(nvy);
-          }
-
-          return { ...b, x: nx, y: ny, vx: nvx, vy: nvy };
-        });
-      });
-
-      animId = requestAnimationFrame(updatePhysics);
-    };
-
-    animId = requestAnimationFrame(updatePhysics);
-    return () => cancelAnimationFrame(animId);
-  }, [bubbles.length, speed, step, winnerTicket]);
-
-  // Audio & Highlight pulse during drawing phase
-  useEffect(() => {
-    if (step !== 'drawing' || bubbles.length === 0) {
-      setActiveHighlightId(null);
-      return;
+    // Initialize confetti if completed
+    if (step === 'completed' && confetti.length === 0) {
+      const colors = ['#D4AF37', '#E1306C', '#34D399', '#22D3EE', '#A855F7', '#F43F5E', '#FBBF24', '#FFFFFF'];
+      const initialConfetti: ConfettiParticle[] = Array.from({ length: 70 }).map((_, i) => ({
+        id: i,
+        x: Math.random() * 100,
+        y: -30 + Math.random() * 340,
+        size: 6 + Math.random() * 8,
+        color: colors[i % colors.length],
+        speedY: 1.8 + Math.random() * 3.2,
+        speedX: (Math.random() - 0.5) * 1.5,
+        rotation: Math.random() * 360,
+        rotationSpeed: (Math.random() - 0.5) * 8,
+        shape: i % 3 === 0 ? 'strip' : i % 3 === 1 ? 'square' : 'circle',
+      }));
+      setConfetti(initialConfetti);
     }
 
-    const interval = setInterval(() => {
-      const randomIndex = Math.floor(Math.random() * bubbles.length);
-      const chosen = bubbles[randomIndex];
-      if (chosen) {
-        setActiveHighlightId(chosen.id);
-        if (soundEnabled) {
-          playSynthBeep(300 + Math.random() * 400, 'triangle', 0.08);
-        }
+    const updateAnimation = (now: number) => {
+      // 1. Update flying parabola bubbles
+      setActiveBubbles((prev) =>
+        prev.filter((b) => {
+          const elapsed = now - b.startTime;
+          return elapsed < b.duration;
+        })
+      );
+
+      // 2. Update confetti rain if completed
+      if (step === 'completed') {
+        setConfetti((prev) =>
+          prev.map((c) => {
+            let nextY = c.y + c.speedY;
+            let nextX = c.x + c.speedX * 0.1;
+
+            if (nextY > 350) {
+              nextY = -20;
+              nextX = Math.random() * 100;
+            }
+
+            return {
+              ...c,
+              y: nextY,
+              x: nextX,
+              rotation: c.rotation + c.rotationSpeed,
+            };
+          })
+        );
       }
-    }, 180);
 
-    return () => clearInterval(interval);
-  }, [step, bubbles, soundEnabled]);
+      animId = requestAnimationFrame(updateAnimation);
+    };
 
-  // Fanfare sound on completion
+    animId = requestAnimationFrame(updateAnimation);
+    return () => cancelAnimationFrame(animId);
+  }, [step, confetti.length]);
+
+  // Fanfare and applause sound on completion
   useEffect(() => {
     if (step === 'completed' && winnerTicket && soundEnabled) {
+      // Fanfare musical notes
       playSynthBeep(523.25, 'sine', 0.2); // C5
       setTimeout(() => playSynthBeep(659.25, 'sine', 0.2), 150); // E5
       setTimeout(() => playSynthBeep(783.99, 'sine', 0.3), 300); // G5
-      setTimeout(() => playSynthBeep(1046.50, 'sine', 0.5), 500); // C6
+      setTimeout(() => playSynthBeep(1046.5, 'sine', 0.5), 500); // C6
+
+      // Som de Palmas (Applause) no final do sorteio
+      setTimeout(() => playApplauseSound(3.5), 450);
     }
   }, [step, winnerTicket, soundEnabled]);
 
   if (tickets.length === 0) return null;
+
+  const now = performance.now();
+  const width = containerRef.current?.clientWidth || 600;
+  const height = 340;
+  const centerX = width / 2;
+  const centerY = height / 2;
 
   return (
     <div className="bg-gradient-to-b from-[#18181B] via-[#111113] to-[#0A0A0B] border-2 border-[#D4AF37]/50 rounded-2xl p-4 space-y-3 relative overflow-hidden shadow-2xl">
@@ -279,7 +392,7 @@ const BouncingBubblesStage: React.FC<{
           <div className="w-3 h-3 rounded-full bg-[#D4AF37] animate-ping" />
           <h3 className="text-xs font-bold text-white uppercase font-mono tracking-wider flex items-center gap-1.5">
             <Sparkles size={14} className="text-[#D4AF37]" />
-            Arena de Sorteio em Bolhas Saltitantes
+            Arena de Sorteio
           </h3>
           <span className="bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/30 text-[9px] font-mono px-2 py-0.5 rounded-full font-bold">
             {tickets.length} Comentários
@@ -312,7 +425,7 @@ const BouncingBubblesStage: React.FC<{
                   speed === s ? 'bg-[#D4AF37] text-black' : 'text-[#71717A] hover:text-white'
                 }`}
               >
-                {s === 0.5 ? '0.5x (-50%)' : s === 0.7 ? '0.7x' : '1x'}
+                {s === 0.5 ? '0.5x' : s === 0.7 ? '0.7x' : '1x'}
               </button>
             ))}
           </div>
@@ -325,126 +438,192 @@ const BouncingBubblesStage: React.FC<{
               className="bg-[#27272A] hover:bg-[#3F3F46] text-white px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all flex items-center gap-1 cursor-pointer border border-white/10"
             >
               <RefreshCw size={11} />
-              <span>Re-Sorteio</span>
+              <span>Iniciar Sorteio</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Physics Canvas Arena */}
+      {/* Arena Canvas Container */}
       <div
         ref={containerRef}
         className="relative w-full h-[340px] bg-[#0A0A0B] rounded-xl border border-[#27272A] overflow-hidden select-none"
       >
-        {/* Central Profile Avatar Source */}
-        {step !== 'completed' && (
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-0 flex flex-col items-center pointer-events-none opacity-85">
-            <div className="w-20 h-20 rounded-full border-2 border-[#D4AF37]/60 shadow-[0_0_40px_rgba(212,175,55,0.4)] overflow-hidden bg-[#18181B] animate-pulse">
-              <img
-                src={profileImageUrl || AVATAR_IMAGES[0]}
-                alt="Perfil do Sorteio"
-                className="w-full h-full object-cover"
-              />
-            </div>
-            <span className="mt-1.5 bg-black/85 text-[#D4AF37] font-mono text-[9px] px-2.5 py-0.5 rounded-full border border-[#D4AF37]/30 font-bold uppercase tracking-wider">
-              Origem do Sorteio
-            </span>
-          </div>
-        )}
-
         {/* Draw status banner overlay */}
         {step === 'drawing' && (
           <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-[#D4AF37] text-black font-extrabold text-[11px] font-mono px-4 py-1.5 rounded-full uppercase tracking-wider shadow-lg shadow-[#D4AF37]/30 z-30 animate-pulse flex items-center gap-2">
             <RefreshCw size={12} className="animate-spin" />
-            <span>Sorteando Comentário em Bolhas...</span>
+            <span>Sorteando Vencedor...</span>
           </div>
         )}
 
-        {/* Floating Bouncing Bubbles */}
-        {bubbles
-          .slice(0, revealedCount)
-          .filter((b) => step !== 'completed' || (winnerTicket && b.ticketNumber === winnerTicket.ticketNumber))
-          .map((b) => {
-          const isWinner = step === 'completed' && winnerTicket && b.ticketNumber === winnerTicket.ticketNumber;
-          const isHighlighted = activeHighlightId === b.id;
+        {/* CENTER ELEMENT 1: INSTAGRAM PUBLICATION POST IMAGE (Until Completed) */}
+        {step !== 'completed' && (
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 flex flex-col items-center">
+            {/* Pulsing ring during drawing */}
+            {step === 'drawing' && (
+              <div className="absolute inset-0 -m-3 rounded-2xl border-2 border-[#D4AF37]/80 animate-ping pointer-events-none" />
+            )}
 
-          // Dimensions
-          const renderRadius = isWinner ? 54 : b.radius;
-
-          return (
-            <div
-              key={b.id}
-              onMouseEnter={() => setHoveredBubble(b)}
-              onMouseLeave={() => setHoveredBubble(null)}
-              className={`absolute rounded-full flex items-center justify-center cursor-pointer transition-all ${
-                isWinner
-                  ? 'z-40 scale-125 border-4 border-[#D4AF37] shadow-[0_0_45px_rgba(212,175,55,0.9)] animate-bounce'
-                  : isHighlighted
-                  ? 'z-30 border-2 border-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.8)] scale-110'
-                  : 'z-10 border-2 border-[#D4AF37]/40 hover:border-[#D4AF37] hover:scale-110 hover:z-30'
-              }`}
-              style={{
-                width: `${renderRadius * 2}px`,
-                height: `${renderRadius * 2}px`,
-                transform: `translate3d(${b.x - renderRadius}px, ${b.y - renderRadius}px, 0)`,
-                transition: isWinner ? 'all 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275)' : 'none',
-              }}
-            >
-              {/* Profile image inside bubble */}
-              <img
-                src={b.avatarUrl}
-                alt={b.username}
-                className="w-full h-full rounded-full object-cover pointer-events-none"
-              />
-
-              {/* Username label badge below bubble */}
-              <div className="absolute -bottom-2 bg-black/90 text-white font-mono text-[9px] px-1.5 py-0.5 rounded-full border border-[#D4AF37]/50 max-w-[80px] truncate pointer-events-none font-bold text-center shadow-md">
-                @{b.username}
+            <div className="w-24 h-28 bg-[#18181B] border-2 border-[#D4AF37] rounded-xl p-1.5 shadow-[0_0_35px_rgba(212,175,55,0.4)] flex flex-col justify-between overflow-hidden relative group">
+              {/* Instagram post header */}
+              <div className="flex items-center justify-between pb-1 border-b border-white/10">
+                <div className="flex items-center gap-1">
+                  <Instagram size={11} className="text-[#E1306C]" />
+                  <span className="text-[8px] font-mono font-bold text-white truncate max-w-[50px]">
+                    acervus.core
+                  </span>
+                </div>
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
               </div>
 
-              {/* Winner Golden Crown / Trophy */}
-              {isWinner && (
-                <div className="absolute -top-5 bg-[#D4AF37] text-black rounded-full p-1 border border-white shadow-lg animate-bounce">
-                  <Award size={16} />
+              {/* Instagram Post Image Thumbnail */}
+              <div className="w-full h-16 rounded-md overflow-hidden my-1 relative bg-black">
+                <img
+                  src={effectivePostImage}
+                  alt="Post do Instagram"
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-1">
+                  <span className="text-[7px] text-[#D4AF37] font-mono font-bold uppercase tracking-tight truncate">
+                    Post do Sorteio
+                  </span>
                 </div>
-              )}
-            </div>
-          );
-        })}
+              </div>
 
-        {/* Confetti / Papel Picado Explosion Animation on Completed */}
+              {/* Post Footer status */}
+              <div className="flex items-center justify-between text-[8px] font-mono text-[#A1A1AA] pt-0.5">
+                <span className="text-white font-bold">{tickets.length} validados</span>
+                <Sparkles size={10} className="text-[#D4AF37]" />
+              </div>
+            </div>
+
+            <span className="mt-1.5 bg-black/90 text-[#D4AF37] font-mono text-[9px] px-2.5 py-0.5 rounded-full border border-[#D4AF37]/40 font-bold uppercase tracking-wider shadow-md">
+              Publicação do Sorteio
+            </span>
+          </div>
+        )}
+
+        {/* CENTER ELEMENT 2: WINNER BUBBLE (Replaces Post Image on Completed) */}
+        {step === 'completed' && winnerTicket && (
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-40 flex flex-col items-center animate-fadeIn">
+            <div className="relative">
+              {/* Winner Golden Crown */}
+              <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-gradient-to-r from-[#D4AF37] via-[#FBBF24] to-[#D4AF37] text-black rounded-full p-1.5 border-2 border-white shadow-xl animate-bounce z-50 flex items-center gap-1 px-2.5">
+                <Award size={16} className="text-black fill-black" />
+                <span className="text-[9px] font-black uppercase font-mono tracking-wider">Vencedor!</span>
+              </div>
+
+              {/* Winner Bubble Container */}
+              <div className="w-28 h-28 rounded-full border-4 border-[#D4AF37] shadow-[0_0_60px_rgba(212,175,55,0.95)] overflow-hidden bg-[#18181B] relative flex items-center justify-center transform scale-110">
+                <img
+                  src={winnerTicket.avatarUrl || AVATAR_IMAGES[0]}
+                  alt={winnerTicket.username}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+
+              {/* Username & Ticket badge below Winner Bubble */}
+              <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 bg-black/95 text-white font-mono text-[10px] px-3 py-1 rounded-full border-2 border-[#D4AF37] shadow-2xl font-black text-center flex items-center gap-1.5 whitespace-nowrap z-50">
+                <span className="text-[#D4AF37]">@{winnerTicket.username}</span>
+                <span className="bg-emerald-500/20 text-emerald-400 text-[8px] px-1.5 py-0.2 rounded font-bold border border-emerald-500/30">
+                  {winnerTicket.ticketNumber}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* PARABOLA FLYING BUBBLES (Reading Comments from Center to Sides in 180° Arc) */}
+        {step !== 'completed' &&
+          activeBubbles.map((b) => {
+            const elapsed = now - b.startTime;
+            const progress = Math.min(1, elapsed / b.duration);
+
+            // 180° Parabola Trajectory Calculation
+            const angleRad = (b.angleDeg * Math.PI) / 180;
+            const distance = b.maxDistance * progress;
+            const parabolaArc = 4 * b.arcHeight * progress * (1 - progress);
+
+            // Polar to Cartesian with Parabola Arc
+            const dx = Math.sin(angleRad) * distance;
+            const dy = -Math.cos(angleRad) * distance - parabolaArc;
+
+            const posX = centerX + dx;
+            const posY = centerY + dy;
+
+            // Fade in at start (0-0.15) and Fade out at end (0.7-1.0) -> Sumindo na sequência!
+            let opacity = 1.0;
+            if (progress < 0.15) {
+              opacity = progress / 0.15;
+            } else if (progress > 0.7) {
+              opacity = (1 - progress) / 0.3;
+            }
+
+            const scale = progress < 0.15 ? 0.4 + (progress / 0.15) * 0.6 : 1.0 - (progress > 0.7 ? (progress - 0.7) * 1.5 : 0);
+
+            return (
+              <div
+                key={b.id}
+                onMouseEnter={() =>
+                  setHoveredBubble({
+                    ticketNumber: b.ticketNumber,
+                    username: b.username,
+                    commentText: b.commentText,
+                    commentId: b.id,
+                    instagramId: b.username,
+                    taggedCount: 2,
+                    hashSeed: '',
+                    timestamp: '',
+                  })
+                }
+                onMouseLeave={() => setHoveredBubble(null)}
+                className="absolute rounded-full border-2 border-[#D4AF37] shadow-[0_0_15px_rgba(212,175,55,0.7)] flex items-center justify-center cursor-pointer pointer-events-auto"
+                style={{
+                  width: '42px',
+                  height: '42px',
+                  transform: `translate3d(${posX - 21}px, ${posY - 21}px, 0) scale(${scale})`,
+                  opacity,
+                  transition: 'none',
+                }}
+              >
+                <img
+                  src={b.avatarUrl}
+                  alt={b.username}
+                  className="w-full h-full rounded-full object-cover pointer-events-none"
+                />
+                <div className="absolute -bottom-2 bg-black/90 text-white font-mono text-[8px] px-1.5 py-0.2 rounded-full border border-[#D4AF37]/60 max-w-[70px] truncate pointer-events-none font-bold text-center">
+                  @{b.username}
+                </div>
+              </div>
+            );
+          })}
+
+        {/* CHUVA DE PAPEL PICADO (CONFETTI SHOWER) ON COMPLETED STATE */}
         {step === 'completed' && (
           <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
-            {Array.from({ length: 45 }).map((_, i) => {
-              const colors = ['#D4AF37', '#34D399', '#60A5FA', '#F43F5E', '#A855F7', '#FBBF24', '#22D3EE'];
-              const color = colors[i % colors.length];
-              const left = 45 + (Math.random() - 0.5) * 70;
-              const top = 40 + (Math.random() - 0.5) * 50;
-              const animDuration = 1.2 + Math.random() * 1.8;
-              const animDelay = Math.random() * 0.3;
-              return (
-                <div
-                  key={i}
-                  className="absolute w-3 h-3 rounded-sm animate-ping opacity-90"
-                  style={{
-                    backgroundColor: color,
-                    left: `${left}%`,
-                    top: `${top}%`,
-                    animationDuration: `${animDuration}s`,
-                    animationDelay: `${animDelay}s`,
-                    transform: `rotate(${Math.random() * 360}deg) scale(${0.6 + Math.random() * 1.4})`,
-                  }}
-                />
-              );
-            })}
+            {confetti.map((c) => (
+              <div
+                key={c.id}
+                className="absolute shadow-sm"
+                style={{
+                  left: `${c.x}%`,
+                  top: `${c.y}px`,
+                  width: c.shape === 'strip' ? `${c.size * 0.4}px` : `${c.size}px`,
+                  height: c.shape === 'strip' ? `${c.size * 1.8}px` : `${c.size}px`,
+                  backgroundColor: c.color,
+                  borderRadius: c.shape === 'circle' ? '50%' : '1px',
+                  transform: `rotate(${c.rotation}deg)`,
+                  opacity: 0.85,
+                }}
+              />
+            ))}
           </div>
         )}
 
         {/* Hovered Bubble Info Tooltip */}
         {hoveredBubble && (
-          <div
-            className="absolute bottom-3 left-3 bg-[#18181B]/95 border border-[#D4AF37] text-white p-2.5 rounded-xl text-xs font-mono z-40 max-w-xs shadow-xl backdrop-blur-md space-y-1 pointer-events-none"
-          >
+          <div className="absolute bottom-3 left-3 bg-[#18181B]/95 border border-[#D4AF37] text-white p-2.5 rounded-xl text-xs font-mono z-50 max-w-xs shadow-xl backdrop-blur-md space-y-1 pointer-events-none">
             <div className="flex items-center gap-2">
               <span className="text-[#D4AF37] font-bold">@{hoveredBubble.username}</span>
               <span className="bg-[#27272A] text-emerald-400 text-[9px] px-1.5 py-0.5 rounded font-bold">
@@ -455,16 +634,13 @@ const BouncingBubblesStage: React.FC<{
           </div>
         )}
 
-        {/* Winner Highlight Card inside Stage */}
+        {/* Winner Announcement Footer Card inside Arena */}
         {step === 'completed' && winnerTicket && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-[#0A0A0B]/95 border-2 border-emerald-500 text-white px-5 py-3 rounded-2xl z-40 text-center space-y-1 shadow-2xl backdrop-blur-lg max-w-md w-full animate-fadeIn">
-            <div className="flex items-center justify-center gap-2 text-emerald-400 font-extrabold text-sm font-mono uppercase tracking-wider">
-              <Award size={18} /> @{winnerTicket.username} VENCEU O SORTEIO!
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-[#0A0A0B]/95 border-2 border-emerald-500 text-white px-5 py-2.5 rounded-2xl z-50 text-center space-y-0.5 shadow-2xl backdrop-blur-lg max-w-md w-full animate-fadeIn">
+            <div className="flex items-center justify-center gap-2 text-emerald-400 font-extrabold text-xs font-mono uppercase tracking-wider">
+              <Award size={16} /> @{winnerTicket.username} VENCEU O SORTEIO!
             </div>
-            <p className="text-xs text-[#A1A1AA] italic truncate">"{winnerTicket.commentText}"</p>
-            <div className="text-[10px] font-mono text-[#D4AF37] font-bold">
-              Bilhete da Sorte: {winnerTicket.ticketNumber}
-            </div>
+            <p className="text-[11px] text-[#A1A1AA] italic truncate">"{winnerTicket.commentText}"</p>
           </div>
         )}
       </div>
@@ -714,53 +890,8 @@ export const InstagramSorteioModule: React.FC = () => {
     return fullList;
   };
 
-  const handleStartProcess = () => {
-    setShowArenaModal(true);
-    setStep('fetching');
-    setFetchProgress(0);
-    setRateLimitPercent(18);
-    setTotalFetched(0);
-    setValidTickets([]);
-    setWinnerTicket(null);
-    setDiscardedStats({
-      insufficientMentions: 0,
-      duplicateMentions: 0,
-      fakeInactive: 0,
-      verifiedCelebrity: 0,
-      businessAccount: 0,
-      spamBotBurst: 0,
-      missingLike: 0,
-      missingStory: 0,
-    });
-
-    addLog(`Conectando ao endpoint da Graph API: GET /${apiVersion}/${mediaId}/comments?access_token=${apiAccessToken.substring(0, 8)}...`);
-    addLog(`App ID Ativo: ${apiClientId} | Conta Comercial ID: ${apiBusinessId}`);
-    addLog('Cursor ativado: limit=100 & fields=id,text,timestamp,from{id,username}');
-
-    // Step 1: Simulate Graph API Fetching with Cursors & Rate Limit Control
-    let currentFetched = 0;
-    const interval = setInterval(() => {
-      currentFetched += 25;
-      setTotalFetched(currentFetched);
-      setFetchProgress(Math.min(100, Math.floor((currentFetched / 120) * 100)));
-      setRateLimitPercent((prev) => Math.min(85, prev + 6));
-
-      addLog(`Graph API Response: HTTP 200 OK [Cursor: after=QVFI...${currentFetched}] (${currentFetched} comentários recebidos)`);
-
-      if (currentFetched >= 120) {
-        clearInterval(interval);
-        addLog('Fase 1 Concluída: 120 comentários extraídos via paginação Graph API.');
-        
-        // Move to Filtering
-        setTimeout(() => executeFilteringPipeline(), 600);
-      }
-    }, 400);
-  };
-
-  const executeFilteringPipeline = () => {
-    setStep('filtering');
-    addLog('Fase 2 Iniciada: Aplicando Pipeline de Filtros e Validações Anti-Fraude...');
-
+  // Function to process raw comments against anti-fraud rules and return exact valid tickets
+  const executeFilteringPipelineSync = () => {
     const rawComments = generateMockComments();
     const tickets: TicketRecord[] = [];
     const seenUsers = new Set<string>();
@@ -777,7 +908,7 @@ export const InstagramSorteioModule: React.FC = () => {
       missingStory: 0,
     };
 
-    rawComments.forEach((c) => {
+    rawComments.forEach((c, idx) => {
       // Rule 1: Min Mentions Check
       if (c.taggedUsers.length < minMentions) {
         stats.insufficientMentions++;
@@ -847,30 +978,57 @@ export const InstagramSorteioModule: React.FC = () => {
         commentText: c.text,
         taggedCount: c.taggedUsers.length,
         hashSeed: seed,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        avatarUrl: AVATAR_IMAGES[idx % AVATAR_IMAGES.length],
       });
     });
 
-    setDiscardedStats(stats);
+    return { tickets, stats, rawCount: rawComments.length };
+  };
+
+  const handleStartApuracao = () => {
+    // Unlock and prepare Audio Context on user gesture
+    getAudioContext();
+
+    // 1. Pre-process and filter comments upfront so arena comment count is constant from the start
+    const { tickets, stats, rawCount } = executeFilteringPipelineSync();
     setValidTickets(tickets);
+    setDiscardedStats(stats);
+    setStep('fetching');
+    setFetchProgress(0);
+    setRateLimitPercent(18);
+    setTotalFetched(0);
+    setWinnerTicket(null);
 
-    addLog(`Filtro Anti-Fraude Concluído: ${tickets.length} bilhetes gerados (${rawComments.length - tickets.length} desconsiderados).`);
+    addLog(`✅ Comentários pré-processados e validados: ${tickets.length} elegíveis (${rawCount - tickets.length} desconsiderados por filtros).`);
+    addLog(`Conectando ao endpoint da Graph API: GET /${apiVersion}/${mediaId}/comments?access_token=${apiAccessToken.substring(0, 8)}...`);
+    addLog(`App ID Ativo: ${apiClientId} | Conta Comercial ID: ${apiBusinessId}`);
 
-    // Log complete report of validated comments for operator verification
-    const reportLogs: string[] = [];
-    reportLogs.push('================================================================================');
-    tickets.forEach((t, i) => {
-      reportLogs.push(`[CONFERÊNCIA #${i + 1}] Bilhete: ${t.ticketNumber} | @${t.username}: "${t.commentText}" (${t.taggedCount} marcações válidas)`);
-    });
-    reportLogs.push(`📋 RELATÓRIO COMPLETO DE COMENTÁRIOS VALIDADOS EM FILTRO (${tickets.length} BILHETES HOMOLOGADOS)`);
-    reportLogs.push('================================================================================');
-    addMultipleLogs(reportLogs);
+    // Step 1: Simulate fast-forwarding fetch
+    let currentFetched = 0;
+    const interval = setInterval(() => {
+      currentFetched += 30;
+      setTotalFetched(currentFetched);
+      setFetchProgress(Math.min(100, Math.floor((currentFetched / rawCount) * 100)));
+      setRateLimitPercent((prev) => Math.min(85, prev + 8));
 
-    setTimeout(() => {
-      setStep('drawing');
-      setShowArenaModal(true);
-      executeCryptographicDraw(tickets);
-    }, 1200);
+      addLog(`Graph API: Response OK (${currentFetched}/${rawCount} comentários sincronizados)`);
+
+      if (currentFetched >= rawCount) {
+        clearInterval(interval);
+        addLog(`Fase 1 & 2 Concluídas: ${tickets.length} bilhetes validados e prontos para o sorteio.`);
+        setStep('idle');
+      }
+    }, 250);
+  };
+
+  const handleStartDraw = () => {
+    getAudioContext();
+    const tickets = validTickets.length > 0 ? validTickets : executeFilteringPipelineSync().tickets;
+    setValidTickets(tickets);
+    setStep('drawing');
+    setWinnerTicket(null);
+    executeCryptographicDraw(tickets);
   };
 
   const executeCryptographicDraw = (tickets: TicketRecord[]) => {
@@ -1381,19 +1539,19 @@ export const InstagramSorteioModule: React.FC = () => {
 
               {/* Execute Action Button */}
               <button
-                onClick={handleStartProcess}
+                onClick={handleStartApuracao}
                 disabled={step === 'fetching' || step === 'filtering' || step === 'drawing'}
                 className="w-full bg-[#D4AF37] hover:bg-[#E5C158] text-black font-extrabold py-3 rounded-xl text-xs uppercase tracking-wider shadow-lg shadow-[#D4AF37]/20 transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50"
               >
                 {step === 'fetching' || step === 'filtering' || step === 'drawing' ? (
                   <>
                     <RefreshCw size={16} className="animate-spin" />
-                    <span>Processando Pipeline...</span>
+                    <span>Processando Apuração...</span>
                   </>
                 ) : (
                   <>
                     <Play size={16} />
-                    <span>Iniciar Apuração e Sorteio Automatizado</span>
+                    <span>Iniciar Apuração</span>
                   </>
                 )}
               </button>
@@ -1404,26 +1562,34 @@ export const InstagramSorteioModule: React.FC = () => {
           {/* Right Column: Real-Time Execution Console & Results (7 Cols) */}
           <div className="lg:col-span-7 space-y-5">
             
-            {/* Bouncing Bubbles Arena Modal Trigger Card */}
-            <div className="bg-gradient-to-br from-[#18181B] via-[#111113] to-[#0A0A0B] border-2 border-[#D4AF37]/50 rounded-2xl p-6 text-center space-y-4 shadow-2xl relative overflow-hidden">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(212,175,55,0.1)_0%,transparent_70%)] pointer-events-none" />
-              <div className="w-16 h-16 rounded-full bg-[#D4AF37]/10 border-2 border-[#D4AF37] flex items-center justify-center mx-auto text-[#D4AF37] shadow-[0_0_30px_rgba(212,175,55,0.3)] animate-pulse">
-                <Sparkles size={28} />
+            {/* Inline Real-Time Arena View */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-xs font-mono font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                  <Sparkles size={14} className="text-[#D4AF37]" />
+                  Arena de Sorteio em Tempo Real
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowArenaModal(true)}
+                  className="bg-[#27272A] hover:bg-[#3F3F46] text-[#D4AF37] border border-[#D4AF37]/40 px-3 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Eye size={12} />
+                  <span>Expandir Tela Cheia (Modal)</span>
+                </button>
               </div>
-              <div className="space-y-1">
-                <h3 className="text-base font-bold text-white font-mono uppercase tracking-wider">Arena de Sorteio em Bolhas Saltitantes</h3>
-                <p className="text-xs text-[#A1A1AA] max-w-md mx-auto">
-                  Visualização imersiva em tempo real com animação padrão em 1x, saltos a partir do perfil central e efeito festivo de papel picado.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowArenaModal(true)}
-                className="bg-[#D4AF37] hover:bg-[#E5C158] text-black font-extrabold px-6 py-3 rounded-xl text-xs uppercase tracking-wider shadow-lg shadow-[#D4AF37]/30 transition-all cursor-pointer inline-flex items-center gap-2 active:scale-95"
-              >
-                <Play size={16} />
-                <span>Abrir Arena de Sorteio (Modal)</span>
-              </button>
+
+              <BouncingBubblesStage
+                tickets={
+                  validTickets.length > 0
+                    ? validTickets
+                    : executeFilteringPipelineSync().tickets
+                }
+                step={step}
+                winnerTicket={winnerTicket}
+                onReplayDraw={handleStartDraw}
+                profileImageUrl={testedProfileImage}
+              />
             </div>
 
             {/* Live Progress Card */}
@@ -1625,7 +1791,7 @@ export const InstagramSorteioModule: React.FC = () => {
             <div className="flex items-center justify-between px-6 py-4 border-b border-[#27272A] bg-[#18181B]">
               <div className="flex items-center gap-2">
                 <Sparkles size={18} className="text-[#D4AF37]" />
-                <h2 className="text-sm font-bold text-white font-mono uppercase tracking-wider">Arena de Sorteio em Bolhas Saltitantes (1x)</h2>
+                <h2 className="text-sm font-bold text-white font-mono uppercase tracking-wider">Arena de Sorteio</h2>
               </div>
               <button
                 type="button"
@@ -1640,21 +1806,11 @@ export const InstagramSorteioModule: React.FC = () => {
                 tickets={
                   validTickets.length > 0
                     ? validTickets
-                    : generateMockComments().map((c, i) => ({
-                        ticketNumber: `SLOT-${100000 + i}`,
-                        instagramId: c.instagramId,
-                        username: c.username,
-                        commentId: c.id,
-                        commentText: c.text,
-                        taggedCount: c.taggedUsers.length,
-                        hashSeed: 'seed',
-                        timestamp: c.timestamp,
-                        avatarUrl: AVATAR_IMAGES[i % AVATAR_IMAGES.length],
-                      }))
+                    : executeFilteringPipelineSync().tickets
                 }
                 step={step}
                 winnerTicket={winnerTicket}
-                onReplayDraw={handleStartProcess}
+                onReplayDraw={handleStartDraw}
                 profileImageUrl={testedProfileImage}
               />
             </div>

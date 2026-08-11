@@ -1,9 +1,9 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, lazy, Suspense } from 'react';
 import { Cliente, FormularioWeb, ItemAcervo, ReservaComItens, StatusCicloVenda, StatusReserva, EmpresaConfig, ThemeConfig, GoogleAccountConfig, CategoriaItem, TransacaoFinanceira, RegistroManutencao, DispositivoAutorizado, ModeloContrato } from './types';
 import { INITIAL_CLIENTES, INITIAL_ITENS, INITIAL_RESERVAS, INITIAL_EMPRESA_CONFIG, INITIAL_THEME_CONFIG, INITIAL_CATEGORIAS, INITIAL_FINANCE_TRANSACTIONS, INITIAL_MAINTENANCE_LOGS, INITIAL_MODELOS_CONTRATO } from './data/initialData';
 import { applyThemeToDocument } from './utils/themeUtils';
 import { Navbar } from './components/Navbar';
-import { Check, Loader2, AlertTriangle } from 'lucide-react';
+import { Check, Loader2, AlertTriangle, Sparkles } from 'lucide-react';
 import { 
   fetchCollection, 
   saveDocument, 
@@ -18,24 +18,25 @@ import {
 } from './lib/firebaseSync';
 import { onSnapshot, collection } from 'firebase/firestore';
 import { db } from './lib/firebase';
-
-import { InventarioView } from './components/InventarioView';
-import { ReservasView } from './components/ReservasView';
-import { ClientesView } from './components/ClientesView';
-import { NovaReservaModal } from './components/NovaReservaModal';
-import { ContratoPdfModal } from './components/ContratoPdfModal';
-import { WhatsAppModal } from './components/WhatsAppModal';
-import { WebFormModal } from './components/WebFormModal';
-import { WorkManagerSimModal } from './components/WorkManagerSimModal';
 import { getAppLogoUrl, handleLogoError } from './utils/logoUtils';
-import { EmpresaConfigView } from './components/EmpresaConfigView';
-import { FinanceiroView } from './components/FinanceiroView';
-import { ManutencaoView } from './components/ManutencaoView';
-import { RelatoriosView } from './components/RelatoriosView';
-import { Sparkles } from 'lucide-react';
-import { AiAssistantDrawer } from './components/AiAssistantDrawer';
-import { LockScreen } from './components/LockScreen';
-import { PropostaOrcamentoView } from './components/PropostaOrcamentoView';
+import { ViewSkeleton } from './components/ViewSkeleton';
+
+// Code-Splitting & Lazy Loading de Telas para Carregamento e Troca Sub-50ms
+const InventarioView = lazy(() => import('./components/InventarioView').then(m => ({ default: m.InventarioView })));
+const ReservasView = lazy(() => import('./components/ReservasView').then(m => ({ default: m.ReservasView })));
+const ClientesView = lazy(() => import('./components/ClientesView').then(m => ({ default: m.ClientesView })));
+const EmpresaConfigView = lazy(() => import('./components/EmpresaConfigView').then(m => ({ default: m.EmpresaConfigView })));
+const FinanceiroView = lazy(() => import('./components/FinanceiroView').then(m => ({ default: m.FinanceiroView })));
+const ManutencaoView = lazy(() => import('./components/ManutencaoView').then(m => ({ default: m.ManutencaoView })));
+const RelatoriosView = lazy(() => import('./components/RelatoriosView').then(m => ({ default: m.RelatoriosView })));
+const PropostaOrcamentoView = lazy(() => import('./components/PropostaOrcamentoView').then(m => ({ default: m.PropostaOrcamentoView })));
+const LockScreen = lazy(() => import('./components/LockScreen').then(m => ({ default: m.LockScreen })));
+const NovaReservaModal = lazy(() => import('./components/NovaReservaModal').then(m => ({ default: m.NovaReservaModal })));
+const ContratoPdfModal = lazy(() => import('./components/ContratoPdfModal').then(m => ({ default: m.ContratoPdfModal })));
+const WhatsAppModal = lazy(() => import('./components/WhatsAppModal').then(m => ({ default: m.WhatsAppModal })));
+const WebFormModal = lazy(() => import('./components/WebFormModal').then(m => ({ default: m.WebFormModal })));
+const WorkManagerSimModal = lazy(() => import('./components/WorkManagerSimModal').then(m => ({ default: m.WorkManagerSimModal })));
+const AiAssistantDrawer = lazy(() => import('./components/AiAssistantDrawer').then(m => ({ default: m.AiAssistantDrawer })));
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('inventario');
@@ -464,6 +465,25 @@ export default function App() {
     loadData();
     return () => clearTimeout(globalSafetyTimer);
   }, [tenantId]);
+
+  // Optimization: Preload lazy view chunks in idle background time for instant sub-50ms tab switching
+  useEffect(() => {
+    if (!isLoading) {
+      const preloadViews = () => {
+        import('./components/ReservasView');
+        import('./components/ClientesView');
+        import('./components/EmpresaConfigView');
+        import('./components/FinanceiroView');
+        import('./components/ManutencaoView');
+        import('./components/RelatoriosView');
+      };
+      if ('requestIdleCallback' in window) {
+        (window as any).requestIdleCallback(preloadViews);
+      } else {
+        setTimeout(preloadViews, 500);
+      }
+    }
+  }, [isLoading]);
 
   // Enterprise real-time reactive sync engine (Android WorkManager/LiveSync style)
   useEffect(() => {
@@ -1792,44 +1812,48 @@ export default function App() {
 
   if (urlPropostaId) {
     return (
-      <PropostaOrcamentoView
-        propostaId={urlPropostaId}
-        webForms={webForms}
-        itens={itens}
-        empresaConfig={empresaConfig}
-        themeConfig={themeConfig}
-        onConfirmProposal={handleConfirmProposal}
-        onRejectProposal={handleRejectProposal}
-        onUpdateProposalText={handleUpdateProposalText}
-      />
+      <Suspense fallback={<ViewSkeleton title="Proposta de Orçamento" />}>
+        <PropostaOrcamentoView
+          propostaId={urlPropostaId}
+          webForms={webForms}
+          itens={itens}
+          empresaConfig={empresaConfig}
+          themeConfig={themeConfig}
+          onConfirmProposal={handleConfirmProposal}
+          onRejectProposal={handleRejectProposal}
+          onUpdateProposalText={handleUpdateProposalText}
+        />
+      </Suspense>
     );
   }
 
   if (!authenticatedDevice) {
     return (
-      <LockScreen
-        empresaConfig={empresaConfig}
-        onAuthenticated={(device, isNewClient) => {
-          localStorage.setItem('locadora_device_uuid', device.id);
-          localStorage.setItem('locadora_authenticated_device', JSON.stringify(device));
-          setAuthenticatedDevice(device);
-          setDispositivos((prev) => {
-            const exists = prev.some((d) => d.id === device.id);
-            if (exists) {
-              return prev.map((d) => (d.id === device.id ? device : d));
+      <Suspense fallback={<ViewSkeleton title="Autenticação" />}>
+        <LockScreen
+          empresaConfig={empresaConfig}
+          onAuthenticated={(device, isNewClient) => {
+            localStorage.setItem('locadora_device_uuid', device.id);
+            localStorage.setItem('locadora_authenticated_device', JSON.stringify(device));
+            setAuthenticatedDevice(device);
+            setDispositivos((prev) => {
+              const exists = prev.some((d) => d.id === device.id);
+              if (exists) {
+                return prev.map((d) => (d.id === device.id ? device : d));
+              }
+              return [...prev, device];
+            });
+            if (isNewClient) {
+              setIsNewClientWelcome(true);
+              setActiveTab('empresa');
+              setEmpresaSubTab('empresa');
             }
-            return [...prev, device];
-          });
-          if (isNewClient) {
-            setIsNewClientWelcome(true);
-            setActiveTab('empresa');
-            setEmpresaSubTab('empresa');
-          }
-        }}
-        dispositivos={dispositivos}
-        onRefreshDispositivos={handleRefreshDispositivos}
-        onUpdateEmpresaConfig={(newCfg) => setEmpresaConfig(newCfg)}
-      />
+          }}
+          dispositivos={dispositivos}
+          onRefreshDispositivos={handleRefreshDispositivos}
+          onUpdateEmpresaConfig={(newCfg) => setEmpresaConfig(newCfg)}
+        />
+      </Suspense>
     );
   }
 
@@ -1852,239 +1876,243 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {activeTab === 'inventario' && (
-          <InventarioView
-            itens={itens}
-            categorias={categorias}
-            onAddItem={handleAddItem}
-            onEditItem={handleEditItem}
-            onDeleteItem={handleDeleteItem}
-            onGenerateWebForm={handleGenerateWebForm}
-            onSaveCategoria={handleSaveCategoria}
-            onGoToCategorias={() => {
-              setEmpresaSubTab('categorias');
-              setActiveTab('empresa');
-            }}
-            selectedClienteForWebForm={selectedClienteForWebForm}
-            onClearClienteForWebForm={() => setSelectedClienteForWebForm(null)}
-            listVisibility={empresaConfig.listVisibility}
-          />
-        )}
+        <Suspense fallback={<ViewSkeleton />}>
+          {activeTab === 'inventario' && (
+            <InventarioView
+              itens={itens}
+              categorias={categorias}
+              onAddItem={handleAddItem}
+              onEditItem={handleEditItem}
+              onDeleteItem={handleDeleteItem}
+              onGenerateWebForm={handleGenerateWebForm}
+              onSaveCategoria={handleSaveCategoria}
+              onGoToCategorias={() => {
+                setEmpresaSubTab('categorias');
+                setActiveTab('empresa');
+              }}
+              selectedClienteForWebForm={selectedClienteForWebForm}
+              onClearClienteForWebForm={() => setSelectedClienteForWebForm(null)}
+              listVisibility={empresaConfig.listVisibility}
+            />
+          )}
 
-        {activeTab === 'reservas' && (
-          <ReservasView
-            reservas={reservas}
-            clientes={clientes}
-            webForms={webForms}
-            empresaConfig={empresaConfig}
-            onUpdateStatus={handleUpdateStatus}
-            onOpenNovaReserva={() => setIsNovaReservaOpen(true)}
-            onOpenContratoPdf={(r) => setContratoPdfReserva(r)}
-            onOpenWhatsApp={(r) => setWhatsAppReserva(r)}
-            listVisibility={empresaConfig.listVisibility}
-          />
-        )}
+          {activeTab === 'reservas' && (
+            <ReservasView
+              reservas={reservas}
+              clientes={clientes}
+              webForms={webForms}
+              empresaConfig={empresaConfig}
+              onUpdateStatus={handleUpdateStatus}
+              onOpenNovaReserva={() => setIsNovaReservaOpen(true)}
+              onOpenContratoPdf={(r) => setContratoPdfReserva(r)}
+              onOpenWhatsApp={(r) => setWhatsAppReserva(r)}
+              listVisibility={empresaConfig.listVisibility}
+            />
+          )}
 
-        {activeTab === 'clientes' && (
-          <ClientesView
-            clientes={clientes}
-            webForms={webForms}
-            onAddCliente={handleAddCliente}
-            onUpdateCliente={handleUpdateCliente}
-            onToggleClienteStatus={handleToggleClienteStatus}
-            onImportClientes={handleAddClientesBatch}
-            onOpenWhatsApp={(cliente, text) => setWhatsAppClienteDirect({ cliente, text })}
-            onSelectClienteForWebForm={handleSelectClienteForWebForm}
-            onViewProposta={(propostaId) => setUrlPropostaId(propostaId)}
-            listVisibility={empresaConfig.listVisibility}
-          />
-        )}
+          {activeTab === 'clientes' && (
+            <ClientesView
+              clientes={clientes}
+              webForms={webForms}
+              onAddCliente={handleAddCliente}
+              onUpdateCliente={handleUpdateCliente}
+              onToggleClienteStatus={handleToggleClienteStatus}
+              onImportClientes={handleAddClientesBatch}
+              onOpenWhatsApp={(cliente, text) => setWhatsAppClienteDirect({ cliente, text })}
+              onSelectClienteForWebForm={handleSelectClienteForWebForm}
+              onViewProposta={(propostaId) => setUrlPropostaId(propostaId)}
+              listVisibility={empresaConfig.listVisibility}
+            />
+          )}
 
-        {activeTab === 'relatorios' && (
-          <RelatoriosView
-            modelosContratos={modelosContratos}
-            onSaveModelo={handleSaveModeloContrato}
-            onDeleteModelo={handleDeleteModeloContrato}
-            reservas={reservas}
-            clientes={clientes}
-            itens={itens}
-            transacoes={transacoes}
-            empresaConfig={empresaConfig}
-            webForms={webForms}
-            googleAccount={googleAccount}
-            onCreateGoogleForm={handleCreateGoogleForm}
-            onSimulateCustomerSubmit={handleSimulateCustomerSubmit}
-          />
-        )}
+          {activeTab === 'relatorios' && (
+            <RelatoriosView
+              modelosContratos={modelosContratos}
+              onSaveModelo={handleSaveModeloContrato}
+              onDeleteModelo={handleDeleteModeloContrato}
+              reservas={reservas}
+              clientes={clientes}
+              itens={itens}
+              transacoes={transacoes}
+              empresaConfig={empresaConfig}
+              webForms={webForms}
+              googleAccount={googleAccount}
+              onCreateGoogleForm={handleCreateGoogleForm}
+              onSimulateCustomerSubmit={handleSimulateCustomerSubmit}
+            />
+          )}
 
-        {(activeTab === 'empresa' || activeTab === 'webforms') && (
-          <EmpresaConfigView
-            authenticatedDevice={authenticatedDevice}
-            empresaConfig={empresaConfig}
-            onSaveConfig={handleSaveEmpresaConfig}
-            themeConfig={themeConfig}
-            onSaveTheme={handleSaveThemeConfig}
-            googleAccount={googleAccount}
-            onUpdateGoogleAccount={setGoogleAccount}
-            categorias={categorias}
-            itens={itens}
-            onSaveCategoria={handleSaveCategoria}
-            onDeleteCategoria={handleDeleteCategoria}
-            onUpdateItemCategoria={handleUpdateItemCategoria}
-            onBatchRemapCategory={handleBatchRemapCategory}
-            initialSubTab={activeTab === 'webforms' ? 'google_forms' : empresaSubTab}
-            dispositivos={dispositivos}
-            onUpdateDispositivoStatus={handleUpdateDispositivoStatus}
-            onDeleteDispositivo={handleDeleteDispositivo}
-            isNewClientWelcome={isNewClientWelcome}
-            webForms={webForms}
-            onDeleteWebForm={handleDeleteWebForm}
-            onTriggerWorkerSync={handleTriggerWorkerSync}
-            onNavigateToRelatorios={() => setActiveTab('relatorios')}
-            clientes={clientes}
-            reservas={reservas}
-            onRefreshData={handleRefreshAllData}
-            onCreateGoogleForm={handleCreateGoogleForm}
-            onSimulateCustomerSubmit={handleSimulateCustomerSubmit}
-          />
-        )}
+          {(activeTab === 'empresa' || activeTab === 'webforms') && (
+            <EmpresaConfigView
+              authenticatedDevice={authenticatedDevice}
+              empresaConfig={empresaConfig}
+              onSaveConfig={handleSaveEmpresaConfig}
+              themeConfig={themeConfig}
+              onSaveTheme={handleSaveThemeConfig}
+              googleAccount={googleAccount}
+              onUpdateGoogleAccount={setGoogleAccount}
+              categorias={categorias}
+              itens={itens}
+              onSaveCategoria={handleSaveCategoria}
+              onDeleteCategoria={handleDeleteCategoria}
+              onUpdateItemCategoria={handleUpdateItemCategoria}
+              onBatchRemapCategory={handleBatchRemapCategory}
+              initialSubTab={activeTab === 'webforms' ? 'google_forms' : empresaSubTab}
+              dispositivos={dispositivos}
+              onUpdateDispositivoStatus={handleUpdateDispositivoStatus}
+              onDeleteDispositivo={handleDeleteDispositivo}
+              isNewClientWelcome={isNewClientWelcome}
+              webForms={webForms}
+              onDeleteWebForm={handleDeleteWebForm}
+              onTriggerWorkerSync={handleTriggerWorkerSync}
+              onNavigateToRelatorios={() => setActiveTab('relatorios')}
+              clientes={clientes}
+              reservas={reservas}
+              onRefreshData={handleRefreshAllData}
+              onCreateGoogleForm={handleCreateGoogleForm}
+              onSimulateCustomerSubmit={handleSimulateCustomerSubmit}
+            />
+          )}
 
-        {activeTab === 'workmanager' && (
-          <EmpresaConfigView
-            authenticatedDevice={authenticatedDevice}
-            empresaConfig={empresaConfig}
-            onSaveConfig={handleSaveEmpresaConfig}
-            themeConfig={themeConfig}
-            onSaveTheme={handleSaveThemeConfig}
-            googleAccount={googleAccount}
-            onUpdateGoogleAccount={setGoogleAccount}
-            categorias={categorias}
-            itens={itens}
-            onSaveCategoria={handleSaveCategoria}
-            onDeleteCategoria={handleDeleteCategoria}
-            onUpdateItemCategoria={handleUpdateItemCategoria}
-            onBatchRemapCategory={handleBatchRemapCategory}
-            initialSubTab="sincronizacao"
-            dispositivos={dispositivos}
-            onUpdateDispositivoStatus={handleUpdateDispositivoStatus}
-            onDeleteDispositivo={handleDeleteDispositivo}
-            isNewClientWelcome={isNewClientWelcome}
-            webForms={webForms}
-            onTriggerWorkerSync={handleTriggerWorkerSync}
-            clientes={clientes}
-            reservas={reservas}
-            onRefreshData={handleRefreshAllData}
-          />
-        )}
+          {activeTab === 'workmanager' && (
+            <EmpresaConfigView
+              authenticatedDevice={authenticatedDevice}
+              empresaConfig={empresaConfig}
+              onSaveConfig={handleSaveEmpresaConfig}
+              themeConfig={themeConfig}
+              onSaveTheme={handleSaveThemeConfig}
+              googleAccount={googleAccount}
+              onUpdateGoogleAccount={setGoogleAccount}
+              categorias={categorias}
+              itens={itens}
+              onSaveCategoria={handleSaveCategoria}
+              onDeleteCategoria={handleDeleteCategoria}
+              onUpdateItemCategoria={handleUpdateItemCategoria}
+              onBatchRemapCategory={handleBatchRemapCategory}
+              initialSubTab="sincronizacao"
+              dispositivos={dispositivos}
+              onUpdateDispositivoStatus={handleUpdateDispositivoStatus}
+              onDeleteDispositivo={handleDeleteDispositivo}
+              isNewClientWelcome={isNewClientWelcome}
+              webForms={webForms}
+              onTriggerWorkerSync={handleTriggerWorkerSync}
+              clientes={clientes}
+              reservas={reservas}
+              onRefreshData={handleRefreshAllData}
+            />
+          )}
 
-        {activeTab === 'architecture' && (
-          <EmpresaConfigView
-            authenticatedDevice={authenticatedDevice}
-            empresaConfig={empresaConfig}
-            onSaveConfig={handleSaveEmpresaConfig}
-            themeConfig={themeConfig}
-            onSaveTheme={handleSaveThemeConfig}
-            googleAccount={googleAccount}
-            onUpdateGoogleAccount={setGoogleAccount}
-            categorias={categorias}
-            itens={itens}
-            onSaveCategoria={handleSaveCategoria}
-            onDeleteCategoria={handleDeleteCategoria}
-            onUpdateItemCategoria={handleUpdateItemCategoria}
-            onBatchRemapCategory={handleBatchRemapCategory}
-            dispositivos={dispositivos}
-            onUpdateDispositivoStatus={handleUpdateDispositivoStatus}
-            onDeleteDispositivo={handleDeleteDispositivo}
-            isNewClientWelcome={isNewClientWelcome}
-            webForms={webForms}
-            onTriggerWorkerSync={handleTriggerWorkerSync}
-            onNavigateToRelatorios={() => setActiveTab('relatorios')}
-            clientes={clientes}
-            reservas={reservas}
-            onRefreshData={handleRefreshAllData}
-          />
-        )}
+          {activeTab === 'architecture' && (
+            <EmpresaConfigView
+              authenticatedDevice={authenticatedDevice}
+              empresaConfig={empresaConfig}
+              onSaveConfig={handleSaveEmpresaConfig}
+              themeConfig={themeConfig}
+              onSaveTheme={handleSaveThemeConfig}
+              googleAccount={googleAccount}
+              onUpdateGoogleAccount={setGoogleAccount}
+              categorias={categorias}
+              itens={itens}
+              onSaveCategoria={handleSaveCategoria}
+              onDeleteCategoria={handleDeleteCategoria}
+              onUpdateItemCategoria={handleUpdateItemCategoria}
+              onBatchRemapCategory={handleBatchRemapCategory}
+              dispositivos={dispositivos}
+              onUpdateDispositivoStatus={handleUpdateDispositivoStatus}
+              onDeleteDispositivo={handleDeleteDispositivo}
+              isNewClientWelcome={isNewClientWelcome}
+              webForms={webForms}
+              onTriggerWorkerSync={handleTriggerWorkerSync}
+              onNavigateToRelatorios={() => setActiveTab('relatorios')}
+              clientes={clientes}
+              reservas={reservas}
+              onRefreshData={handleRefreshAllData}
+            />
+          )}
 
-        {activeTab === 'financeiro' && (
-          <FinanceiroView
-            transacoes={transacoes}
-            reservas={reservas}
-            onAddTransacao={handleAddTransacao}
-            onUpdateTransacaoStatus={handleUpdateTransacaoStatus}
-            onDeleteTransacao={handleDeleteTransacao}
-            empresaConfig={empresaConfig}
-          />
-        )}
+          {activeTab === 'financeiro' && (
+            <FinanceiroView
+              transacoes={transacoes}
+              reservas={reservas}
+              onAddTransacao={handleAddTransacao}
+              onUpdateTransacaoStatus={handleUpdateTransacaoStatus}
+              onDeleteTransacao={handleDeleteTransacao}
+              empresaConfig={empresaConfig}
+            />
+          )}
 
-        {activeTab === 'manutencao' && (
-          <ManutencaoView
-            itens={itens}
-            onUpdateItemMaintenance={handleUpdateItemMaintenance}
-            manutencoes={manutencoes}
-            onAddMaintenanceLog={handleAddMaintenanceLog}
-            onRemoveMaintenanceLog={handleRemoveMaintenanceLog}
-          />
-        )}
+          {activeTab === 'manutencao' && (
+            <ManutencaoView
+              itens={itens}
+              onUpdateItemMaintenance={handleUpdateItemMaintenance}
+              manutencoes={manutencoes}
+              onAddMaintenanceLog={handleAddMaintenanceLog}
+              onRemoveMaintenanceLog={handleRemoveMaintenanceLog}
+            />
+          )}
+        </Suspense>
       </main>
 
       {/* Modals */}
-      {isNovaReservaOpen && (
-        <NovaReservaModal
-          clientes={clientes}
-          itens={itens}
-          onClose={() => setIsNovaReservaOpen(false)}
-          onSaveReserva={handleSaveReserva}
-        />
-      )}
+      <Suspense fallback={null}>
+        {isNovaReservaOpen && (
+          <NovaReservaModal
+            clientes={clientes}
+            itens={itens}
+            onClose={() => setIsNovaReservaOpen(false)}
+            onSaveReserva={handleSaveReserva}
+          />
+        )}
 
-      {contratoPdfReserva && (
-        <ContratoPdfModal
-          reservaComItens={contratoPdfReserva}
-          empresaConfig={empresaConfig}
-          onClose={() => setContratoPdfReserva(null)}
-        />
-      )}
+        {contratoPdfReserva && (
+          <ContratoPdfModal
+            reservaComItens={contratoPdfReserva}
+            empresaConfig={empresaConfig}
+            onClose={() => setContratoPdfReserva(null)}
+          />
+        )}
 
-      {whatsAppReserva && (
-        <WhatsAppModal
-          reservaComItens={whatsAppReserva}
-          cliente={whatsAppReserva.cliente}
-          empresaConfig={empresaConfig}
-          onClose={() => setWhatsAppReserva(null)}
-          onOpenTemplatesConfig={() => {
-            setActiveTab('empresa');
-            setEmpresaSubTab('whatsapp');
-          }}
-        />
-      )}
+        {whatsAppReserva && (
+          <WhatsAppModal
+            reservaComItens={whatsAppReserva}
+            cliente={whatsAppReserva.cliente}
+            empresaConfig={empresaConfig}
+            onClose={() => setWhatsAppReserva(null)}
+            onOpenTemplatesConfig={() => {
+              setActiveTab('empresa');
+              setEmpresaSubTab('whatsapp');
+            }}
+          />
+        )}
 
-      {whatsAppClienteDirect && (
-        <WhatsAppModal
-          cliente={whatsAppClienteDirect.cliente}
-          initialStatus={StatusCicloVenda.ORCAMENTO_SOLICITADO}
-          empresaConfig={empresaConfig}
-          reservaComItens={
-            reservas[0] || {
-              reserva: { id: 999, clienteId: whatsAppClienteDirect.cliente.id, dataRetirada: Date.now(), dataDevolucao: Date.now() + 86400000 * 3, status: StatusReserva.CONFIRMADA },
-              cliente: whatsAppClienteDirect.cliente,
-              itens: [itens[0]],
-              valorTotal: 750,
-              diasReserva: 3,
+        {whatsAppClienteDirect && (
+          <WhatsAppModal
+            cliente={whatsAppClienteDirect.cliente}
+            initialStatus={StatusCicloVenda.ORCAMENTO_SOLICITADO}
+            empresaConfig={empresaConfig}
+            reservaComItens={
+              reservas[0] || {
+                reserva: { id: 999, clienteId: whatsAppClienteDirect.cliente.id, dataRetirada: Date.now(), dataDevolucao: Date.now() + 86400000 * 3, status: StatusReserva.CONFIRMADA },
+                cliente: whatsAppClienteDirect.cliente,
+                itens: [itens[0]],
+                valorTotal: 750,
+                diasReserva: 3,
+              }
             }
-          }
-          onClose={() => setWhatsAppClienteDirect(null)}
-          onOpenTemplatesConfig={() => {
-            setActiveTab('empresa');
-            setEmpresaSubTab('whatsapp');
-          }}
-        />
-      )}
+            onClose={() => setWhatsAppClienteDirect(null)}
+            onOpenTemplatesConfig={() => {
+              setActiveTab('empresa');
+              setEmpresaSubTab('whatsapp');
+            }}
+          />
+        )}
+      </Suspense>
 
       {/* Floating AI Widget Button */}
       {!isAiAssistantOpen && (
         <button
           onClick={() => setIsAiAssistantOpen(true)}
-          className="fixed bottom-6 right-6 z-40 bg-gradient-to-br from-[#D4AF37] to-[#8B7326] hover:scale-105 text-black font-bold p-3.5 rounded-2xl shadow-2xl shadow-[#D4AF37]/30 border border-[#D4AF37] flex items-center gap-2.5 transition-all cursor-pointer group active:scale-95"
+          className="fixed bottom-6 right-6 z-50 bg-gradient-to-br from-[#D4AF37] to-[#8B7326] hover:scale-105 text-black font-bold p-3.5 rounded-2xl shadow-2xl shadow-[#D4AF37]/30 border border-[#D4AF37] flex items-center gap-2.5 transition-all cursor-pointer group active:scale-95"
           title="Abrir Assistente IA Acervus"
         >
           <Sparkles size={20} className="animate-spin text-black" style={{ animationDuration: '6s' }} />

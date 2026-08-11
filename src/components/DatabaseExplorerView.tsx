@@ -179,14 +179,14 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
           <div className="flex items-center gap-2">
             <Database className="text-[#D4AF37]" size={22} />
             <h2 className="text-lg font-serif italic font-extrabold text-white">
-              Explorador & Gestor do Banco de Dados (GCP Firestore)
+              Explorador & Gestor do Banco de Dados (Cloud SQL PostgreSQL + GCP Firestore)
             </h2>
             <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono font-bold px-2 py-0.5 rounded-full">
-              LIVE PERSISTENCE
+              DRIZZLE ORM + FIRESTORE
             </span>
           </div>
           <p className="text-xs text-[#A1A1AA]">
-            Visualização, edição em tempo real, consulta e manipulação estruturada das coleções no Firebase Firestore / Cache Offline Local.
+            Visualização relacional e documental em tempo real. Suporte a tabelas Cloud SQL PostgreSQL, locks pessimistas e sincronização Firestore.
           </p>
         </div>
 

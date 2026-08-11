@@ -158,8 +158,8 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
 
   const subTabMeta: Record<typeof activeSubTab, { title: string; subtitle: string; icon: any }> = {
     empresa: {
-      title: 'Dados Cadastrais da Locadora',
-      subtitle: 'Gerencie as informações oficiais, CNPJ, representante legal e endereço da locadora.',
+      title: 'Dados Cadastrais da Empresa',
+      subtitle: 'Gerencie as informações oficiais, CNPJ, representante legal e endereço da empresa.',
       icon: Building2,
     },
     painel_configuracao: {
@@ -666,6 +666,35 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
     setIsEmpresaSaved(false);
   };
 
+  const handlePixTipoChaveChange = (novoTipo: string) => {
+    let novaChave = empresaData.pixChave || '';
+
+    if (novoTipo === 'CNPJ' && empresaData.cnpj) {
+      novaChave = empresaData.cnpj;
+    } else if (novoTipo === 'TELEFONE' && empresaData.telefoneWhatsapp) {
+      novaChave = empresaData.telefoneWhatsapp;
+    } else if (novoTipo === 'CPF') {
+      if (empresaData.bancoDocumento && empresaData.bancoDocumento.length <= 14) {
+        novaChave = empresaData.bancoDocumento;
+      }
+    } else if (novoTipo === 'E-MAIL') {
+      if (googleAccount?.email && googleAccount.email !== 'Não Conectado') {
+        novaChave = googleAccount.email;
+      }
+    } else if (novoTipo === 'CHAVE_ALEATORIA') {
+      if (!novaChave || novaChave === empresaData.cnpj || novaChave === empresaData.telefoneWhatsapp) {
+        novaChave = 'a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d';
+      }
+    }
+
+    setEmpresaData((prev) => ({
+      ...prev,
+      pixTipoChave: novoTipo as any,
+      pixChave: novaChave,
+    }));
+    setIsEmpresaSaved(false);
+  };
+
   const handleEmpresaSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSaveConfig(empresaData);
@@ -673,42 +702,6 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
     setTimeout(() => setIsEmpresaSaved(false), 3000);
   };
 
-  const handleToggleListVisibility = (key: keyof ListVisibilityConfig) => {
-    const currentVis = empresaData.listVisibility || {
-      exibirInventarioPorPadrao: true,
-      exibirCategoriasPorPadrao: true,
-      exibirClientesPorPadrao: true,
-      exibirReservasPorPadrao: true,
-    };
-    const isCurrentlyVisible = currentVis[key] !== false;
-    const updated = {
-      ...empresaData,
-      listVisibility: {
-        ...currentVis,
-        [key]: !isCurrentlyVisible,
-      },
-    };
-    setEmpresaData(updated);
-    onSaveConfig(updated);
-    setIsEmpresaSaved(true);
-    setTimeout(() => setIsEmpresaSaved(false), 2500);
-  };
-
-  const handleSetAllListVisibility = (exibir: boolean) => {
-    const updated = {
-      ...empresaData,
-      listVisibility: {
-        exibirInventarioPorPadrao: exibir,
-        exibirCategoriasPorPadrao: exibir,
-        exibirClientesPorPadrao: exibir,
-        exibirReservasPorPadrao: exibir,
-      },
-    };
-    setEmpresaData(updated);
-    onSaveConfig(updated);
-    setIsEmpresaSaved(true);
-    setTimeout(() => setIsEmpresaSaved(false), 2500);
-  };
 
   const handleThemeColorChange = (colorHex: string) => {
     const updated = { ...themeData, primaryColor: colorHex };
@@ -785,7 +778,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
             <div className="flex items-center justify-between border-b border-[#27272A] pb-4">
               <h3 className="font-serif italic text-white text-lg flex items-center gap-2">
                 <Sparkles className="text-[#D4AF37]" size={18} />
-                Dados Cadastrais da Locadora
+                Dados Cadastrais da Empresa
               </h3>
               {isEmpresaSaved && (
                 <span className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3 py-1 rounded-full text-xs font-semibold animate-fade-in">
@@ -847,7 +840,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
 
                 <div>
                   <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center gap-1">
-                    <Phone size={14} className="text-[#D4AF37]" /> Telefone / WhatsApp da Locadora
+                    <Phone size={14} className="text-[#D4AF37]" /> Telefone / WhatsApp da Empresa
                   </label>
                   <PhoneInput
                     value={empresaData.telefoneWhatsapp}
@@ -918,7 +911,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                     </label>
                     <select
                       value={empresaData.pixTipoChave || 'CNPJ'}
-                      onChange={(e) => handleEmpresaChange('pixTipoChave', e.target.value)}
+                      onChange={(e) => handlePixTipoChaveChange(e.target.value)}
                       className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all cursor-pointer"
                     >
                       <option value="CNPJ">CNPJ</option>
@@ -930,9 +923,19 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                   </div>
 
                   <div>
-                    <label className="block font-medium text-[#A1A1AA] mb-1.5">
-                      Chave PIX
-                    </label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block font-medium text-[#A1A1AA]">
+                        Chave PIX
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handlePixTipoChaveChange(empresaData.pixTipoChave || 'CNPJ')}
+                        className="text-[10px] text-[#D4AF37] hover:underline flex items-center gap-1 cursor-pointer"
+                        title="Preencher automaticamente com base nos dados do cadastro"
+                      >
+                        <RefreshCw size={10} /> Auto-preencher
+                      </button>
+                    </div>
                     <input
                       type="text"
                       value={empresaData.pixChave || ''}
@@ -941,6 +944,9 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                       placeholder="Insira a sua chave PIX oficial"
                       className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
                     />
+                    <p className="text-[10px] text-[#71717A] mt-1">
+                      Chave atualizada automaticamente ao alterar o tipo ({empresaData.pixTipoChave || 'CNPJ'}).
+                    </p>
                   </div>
                 </div>
               </div>
@@ -1052,146 +1058,6 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                 </button>
               </div>
             </form>
-          </div>
-
-          {/* Card 2: List Visibility Configuration */}
-          <div className="bg-[#111113] border border-[#27272A] rounded-2xl p-6 shadow-xl space-y-5">
-            <div className="flex items-center justify-between border-b border-[#27272A] pb-4">
-              <div>
-                <h3 className="font-serif italic text-white text-base flex items-center gap-2">
-                  <Sliders className="text-[#D4AF37]" size={18} />
-                  Visibilidade Padrão das Listagens (UI/UX)
-                </h3>
-                <p className="text-[#A1A1AA] text-xs mt-0.5">
-                  Defina quais listagens devem iniciar visíveis por padrão. Você poderá mostrá-las ou ocultá-las a qualquer momento em cada tela.
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* Inventário Toggle */}
-                <div className="flex items-center justify-between p-3.5 bg-[#18181B] rounded-xl border border-[#27272A]">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-lg bg-[#D4AF37]/10 text-[#D4AF37]">
-                      <Package size={16} />
-                    </div>
-                    <div>
-                      <span className="text-white text-xs font-semibold block">Listagem de Itens</span>
-                      <span className="text-[#71717A] text-[10px]">Inventário do acervo</span>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleListVisibility('exibirInventarioPorPadrao')}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${
-                      empresaData.listVisibility?.exibirInventarioPorPadrao !== false ? 'bg-[#D4AF37]' : 'bg-[#27272A]'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-black transition-transform ${
-                        empresaData.listVisibility?.exibirInventarioPorPadrao !== false ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                {/* Categorias Toggle */}
-                <div className="flex items-center justify-between p-3.5 bg-[#18181B] rounded-xl border border-[#27272A]">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-lg bg-[#D4AF37]/10 text-[#D4AF37]">
-                      <FolderKanban size={16} />
-                    </div>
-                    <div>
-                      <span className="text-white text-xs font-semibold block">Listagem de Categorias</span>
-                      <span className="text-[#71717A] text-[10px]">Estruturação de categorias</span>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleListVisibility('exibirCategoriasPorPadrao')}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${
-                      empresaData.listVisibility?.exibirCategoriasPorPadrao !== false ? 'bg-[#D4AF37]' : 'bg-[#27272A]'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-black transition-transform ${
-                        empresaData.listVisibility?.exibirCategoriasPorPadrao !== false ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                {/* Clientes Toggle */}
-                <div className="flex items-center justify-between p-3.5 bg-[#18181B] rounded-xl border border-[#27272A]">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-lg bg-[#D4AF37]/10 text-[#D4AF37]">
-                      <Users size={16} />
-                    </div>
-                    <div>
-                      <span className="text-white text-xs font-semibold block">Listagem de Clientes</span>
-                      <span className="text-[#71717A] text-[10px]">Cadastro e contatos</span>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleListVisibility('exibirClientesPorPadrao')}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${
-                      empresaData.listVisibility?.exibirClientesPorPadrao !== false ? 'bg-[#D4AF37]' : 'bg-[#27272A]'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-black transition-transform ${
-                        empresaData.listVisibility?.exibirClientesPorPadrao !== false ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                {/* Reservas Toggle */}
-                <div className="flex items-center justify-between p-3.5 bg-[#18181B] rounded-xl border border-[#27272A]">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-lg bg-[#D4AF37]/10 text-[#D4AF37]">
-                      <Calendar size={16} />
-                    </div>
-                    <div>
-                      <span className="text-white text-xs font-semibold block">Listagem de Reservas</span>
-                      <span className="text-[#71717A] text-[10px]">Pedidos de locações</span>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleListVisibility('exibirReservasPorPadrao')}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${
-                      empresaData.listVisibility?.exibirReservasPorPadrao !== false ? 'bg-[#D4AF37]' : 'bg-[#27272A]'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-black transition-transform ${
-                        empresaData.listVisibility?.exibirReservasPorPadrao !== false ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex gap-2.5 pt-3 border-t border-[#27272A] text-xs justify-end">
-                <button
-                  type="button"
-                  onClick={() => handleSetAllListVisibility(false)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#27272A] hover:bg-[#3F3F46] text-[#A1A1AA] hover:text-white rounded-lg transition-all cursor-pointer font-semibold"
-                >
-                  <EyeOff size={14} /> Ocultar Todas por Padrão
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSetAllListVisibility(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#27272A] hover:bg-[#3F3F46] text-[#D4AF37] hover:text-white rounded-lg transition-all cursor-pointer font-semibold"
-                >
-                  <Eye size={14} /> Exibir Todas por Padrão
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -2123,6 +1989,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
           reservas={reservas} 
           webForms={webForms} 
           dispositivos={dispositivos} 
+          empresaConfig={empresaConfig}
           onTriggerWorkerSync={onTriggerWorkerSync}
           onRefreshData={onRefreshData}
           hideHeader
