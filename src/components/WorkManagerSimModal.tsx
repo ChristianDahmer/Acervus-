@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { FormularioWeb } from '../types';
 import { Cpu, RefreshCw, CheckCircle, Database, MessageSquare, ShieldCheck, Terminal, HardDrive, Smartphone, SlidersHorizontal } from 'lucide-react';
+import { performGoogleDriveBackup } from '../lib/googleDriveBackup';
 
 interface WorkManagerSimProps {
   webForms: FormularioWeb[];
@@ -120,7 +121,22 @@ export const WorkManagerSimModal: React.FC<WorkManagerSimProps> = ({ webForms, o
 
     // 5. Google Drive Backup
     if (syncConfig.backupGoogleDrive) {
-      newLogs.push(`[DRIVE] Cópia de segurança enviada para a pasta do Google Drive.`);
+      newLogs.push(`[DRIVE] Iniciando envio de cópia de segurança para o Google Drive...`);
+      performGoogleDriveBackup(undefined, 'MANUAL')
+        .then((res) => {
+          setLogs((prev) => [
+            ...prev,
+            res.success
+              ? `[DRIVE SUCESSO] ${res.message}`
+              : `[DRIVE AVISO] ${res.message}`
+          ]);
+        })
+        .catch((err) => {
+          setLogs((prev) => [
+            ...prev,
+            `[DRIVE ERRO] Falha no envio para o Google Drive: ${err.message}`
+          ]);
+        });
     } else {
       newLogs.push(`[PULADO] Backup no Google Drive está DESATIVADO.`);
     }

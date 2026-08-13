@@ -49,7 +49,9 @@ interface PropostaOrcamentoViewProps {
     clienteTelefone: string,
     itemIds: number[],
     dataRetirada: number,
-    dataDevolucao: number
+    dataDevolucao: number,
+    contratoAssinadoText?: string,
+    hashAssinaturaDigital?: string
   ) => Promise<void>;
   onRejectProposal?: (formId: string, motivo: string) => Promise<void>;
   onUpdateProposalText?: (formId: string, newText: string) => Promise<void>;
@@ -180,147 +182,99 @@ export const PropostaOrcamentoView: React.FC<PropostaOrcamentoViewProps> = ({
         if (!item || !item.id || !targetId) return false;
         const normItem = String(item.id).trim().toLowerCase();
         const normTarget = String(targetId).trim().toLowerCase();
-        if (normItem === normTarget) return true;
-
-        // Clean prefix 'form-', 'form_', 'form', 'orc-', 'orc_'
-        const cleanItem = normItem.replace(/^(form|orc)[-_]?/i, '');
-        const cleanTarget = normTarget.replace(/^(form|orc)[-_]?/i, '');
-        return cleanItem === cleanTarget;
+        return normItem === normTarget;
       };
 
       // 1. Check in webForms prop first
+      console.log('DEBUG [PropostaOrcamentoView] Buscando proposta no prop webForms (total:', webForms.length, ') para ID:', propostaId);
       let found = webForms.find(f => matchId(f, propostaId));
-
-      // 2. Fallback: Search all local storage caches across all tenants for webForms
-      if (!found) {
-        try {
-          for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            if (key && key.startsWith('offline_db_') && key.endsWith('_webForms')) {
-              const dataStr = localStorage.getItem(key);
-              if (dataStr) {
-                const forms: FormularioWeb[] = JSON.parse(dataStr);
-                const match = forms.find(f => matchId(f, propostaId));
-                if (match) {
-                  found = match;
-                  break;
-                }
-              }
-            }
-          }
-        } catch (e) {}
+      if (found) {
+        console.log('DEBUG [PropostaOrcamentoView] Proposta ENCONTRADA no prop webForms:', found);
       }
 
-      // 2.5 Fallback: Search current local collection
+      // 2. Fast check in current local collection (instant, no Firestore fetching or loops)
       if (!found) {
         const localForms = getLocalCollection<FormularioWeb>('webForms');
+        console.log('DEBUG [PropostaOrcamentoView] Buscando proposta no cache local (total:', localForms.length, ') para ID:', propostaId);
         found = localForms.find(f => matchId(f, propostaId));
-      }
-
-      // 3. Fallback: Query remote Firestore specifically by document ID (extremely fast)
-      if (!found) {
-        try {
-          // Attempt 1: Fetch with the exact propostaId
-          found = await fetchDocument<FormularioWeb>('webForms', propostaId);
-          
-          // Attempt 2: Fetch with prefix-cleaned ID if different
-          if (!found) {
-            const cleanId = propostaId.replace(/^(form|orc)[-_]?/i, '').trim();
-            if (cleanId !== propostaId) {
-              found = await fetchDocument<FormularioWeb>('webForms', cleanId);
-            }
-          }
-
-          // Attempt 3: Ultimate fallback, scan full collection if not found via direct ID query
-          if (!found) {
-            const remoteForms = await fetchCollection<FormularioWeb>('webForms');
-            found = remoteForms.find(f => matchId(f, propostaId));
-          }
-        } catch (err) {
-          console.warn('[PropostaOrcamentoView] Erro ao buscar propostas específicas do Firestore:', err);
+        if (found) {
+          console.log('DEBUG [PropostaOrcamentoView] Proposta ENCONTRADA no cache local:', found);
         }
       }
 
-      // 4. Fallback: Busca em reservas (incluindo em todas as storages offline de reservas de todos os tenants)
+      // 5. Remote fetch check
       if (!found) {
         try {
-          let allReservas: ReservaComItens[] = getLocalCollection<ReservaComItens>('reservas');
-          try {
-            for (let i = 0; i < localStorage.length; i++) {
-              const key = localStorage.key(i);
-              if (key && key.startsWith('offline_db_') && key.endsWith('_reservas')) {
-                const dataStr = localStorage.getItem(key);
-                if (dataStr) {
-                  const resList: ReservaComItens[] = JSON.parse(dataStr);
-                  allReservas = [...allReservas, ...resList];
-                }
-              }
-            }
-          } catch (e) {}
+          console.log('DEBUG [PropostaOrcamentoView] Buscando proposta no banco remoto do PostgreSQL...');
+          const remoteForms = await fetchCollection<FormularioWeb>('webForms');
+          console.log('DEBUG [PropostaOrcamentoView] remoteForms carregados do PostgreSQL (total:', remoteForms.length, ')');
+          found = remoteForms.find(f => matchId(f, propostaId));
+          if (found) {
+            console.log('DEBUG [PropostaOrcamentoView] Proposta ENCONTRADA no banco remoto:', found);
+          }
+        } catch(e) {
+          console.error("Erro ao buscar proposal remotamente:", e);
+        }
+      }
 
-          const cleanTarget = propostaId.replace(/^(form|orc)[-_]?/i, '').trim().toLowerCase();
-
-          // Try to fetch specific Reserva document from Firestore directly (fast)
-          try {
-            let targetReservaObj = await fetchDocument<ReservaComItens>('reservas', cleanTarget);
-            if (!targetReservaObj && cleanTarget !== propostaId) {
-              targetReservaObj = await fetchDocument<ReservaComItens>('reservas', propostaId);
-            }
-            if (targetReservaObj) {
-              allReservas.push(targetReservaObj);
-            }
-          } catch (e) {}
-
-          // If still not found locally/specifically, fetch remote reservations as ultimate fallback
-          const cleanTargetIdStr = String(cleanTarget);
-          const localMatch = allReservas.find(r => 
-            String(r.reserva.id).toLowerCase() === cleanTargetIdStr ||
-            (r.reserva.origemPropostaId && r.reserva.origemPropostaId.toLowerCase() === propostaId.toLowerCase())
-          );
-
-          if (!localMatch) {
-            try {
-              const remoteReservas = await fetchCollection<ReservaComItens>('reservas');
-              allReservas = [...allReservas, ...remoteReservas];
-            } catch (e) {}
+      // 5.5 Check reservations as a fallback for ORC-based proposal links
+      if (!found) {
+        try {
+          const cleanIdStr = propostaId.startsWith('ORC-') ? propostaId.substring(4) : propostaId;
+          const resId = parseInt(cleanIdStr, 10);
+          console.log('DEBUG [PropostaOrcamentoView] Verificando se propostaId corresponde a uma Reserva...', { propostaId, cleanIdStr, resId });
+          
+          // Try local cache first
+          const localReservas = getLocalCollection<ReservaComItens>('reservas');
+          let matchingRes = localReservas.find(r => r?.reserva?.id !== undefined && (String(r.reserva.id) === String(propostaId) || r.reserva.id === resId || `ORC-${r.reserva.id}` === propostaId));
+          
+          if (!matchingRes) {
+            // Try remote PostgreSQL
+            console.log('DEBUG [PropostaOrcamentoView] Carregando reservas do banco remoto para fallback...');
+            const remoteReservas = await fetchCollection<ReservaComItens>('reservas');
+            matchingRes = remoteReservas.find(r => r?.reserva?.id !== undefined && (String(r.reserva.id) === String(propostaId) || r.reserva.id === resId || `ORC-${r.reserva.id}` === propostaId));
           }
           
-          const targetReserva = allReservas.find(r => 
-            String(r.reserva.id).toLowerCase() === cleanTargetIdStr ||
-            (r.reserva.origemPropostaId && r.reserva.origemPropostaId.toLowerCase() === propostaId.toLowerCase())
-          );
-
-          if (targetReserva) {
+          if (matchingRes) {
+            console.log('DEBUG [PropostaOrcamentoView] Reserva correspondente encontrada! Construindo proposta virtual a partir da reserva:', matchingRes);
             found = {
-              id: `ORC-${targetReserva.reserva.id}`,
-              titulo: `Orçamento de Locação #${targetReserva.reserva.id}`,
-              clienteId: targetReserva.cliente.id,
-              clienteNome: targetReserva.cliente.nome,
-              itens: targetReserva.itens.map(i => ({
+              id: propostaId,
+              titulo: `Orçamento para ${matchingRes.cliente?.nome || 'Cliente'} #${propostaId}`,
+              clienteId: matchingRes.cliente?.id,
+              clienteNome: matchingRes.cliente?.nome,
+              clienteTelefone: matchingRes.cliente?.telefone,
+              itens: matchingRes.itens ? matchingRes.itens.map(i => ({
                 id: i.id,
                 nome: i.nome,
                 precoAluguel: i.precoAluguel,
-                imageUrl: i.imageUrl
-              })),
-              criadoEm: Date.now(),
-              respondido: targetReserva.reserva.propostaAprovada || targetReserva.reserva.status === StatusReserva.CONFIRMADA,
-              resposta: targetReserva.reserva.propostaAprovada ? {
-                clienteNome: targetReserva.cliente.nome,
-                clienteTelefone: targetReserva.cliente.telefone,
-                itemIdsSelecionados: targetReserva.itens.map(i => i.id),
-                dataRetirada: targetReserva.reserva.dataRetirada,
-                dataDevolucao: targetReserva.reserva.dataDevolucao,
-              } : undefined
+                imageUrl: i.imageUrl || ''
+              })) : [],
+              criadoEm: matchingRes.reserva?.dataRetirada || Date.now(),
+              respondido: matchingRes.reserva?.status !== 'PENDENTE',
+              percentualCalcao: matchingRes.reserva?.percentualCalcao ?? 50,
+              textoIntroducao: 'Revisamos esta proposta de orçamento especialmente para você. Marque abaixo os itens do acervo que deseja incluir em seu evento, preencha os detalhes do seu contato e confirme para gerar o agendamento de forma instantânea!'
             };
+            
+            if (matchingRes.reserva?.status !== 'PENDENTE') {
+              found.resposta = {
+                clienteNome: matchingRes.cliente?.nome || '',
+                clienteTelefone: matchingRes.cliente?.telefone || '',
+                itemIdsSelecionados: matchingRes.itens ? matchingRes.itens.map(i => i.id) : [],
+                dataRetirada: matchingRes.reserva?.dataRetirada || Date.now(),
+                dataDevolucao: matchingRes.reserva?.dataDevolucao || Date.now(),
+                enviadoEm: Date.now()
+              };
+            }
           }
         } catch (err) {
-          console.warn('[PropostaOrcamentoView] Erro no fallback de busca em reservas:', err);
+          console.error("Erro ao carregar proposta baseada em reservas:", err);
         }
       }
 
       if (!isMounted) return;
 
       if (!found) {
+        console.warn('DEBUG [PropostaOrcamentoView] Proposta NÃO ENCONTRADA em nenhuma fonte de dados. Ativando fallback robusto com os primeiros itens do acervo...');
         // Fallback robusto para garantir que qualquer link de proposta abra com sucesso
         found = {
           id: propostaId,
@@ -410,7 +364,7 @@ export const PropostaOrcamentoView: React.FC<PropostaOrcamentoViewProps> = ({
     .reduce((sum, item) => sum + item.precoAluguel, 0) || 0;
   
   const totalGeral = subtotal * diasLocacao;
-  const percentualCalcao = proposta?.percentualCalcao !== undefined ? proposta.percentualCalcao : 30;
+  const percentualCalcao = empresaConfig?.painelConfiguracao?.percentualSinalPadrao ?? 30;
   const valorCalcao = (totalGeral * percentualCalcao) / 100;
   const saldoRestante = Math.max(0, totalGeral - valorCalcao);
 
@@ -508,7 +462,9 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
         whatsapp,
         selectedItems,
         timestampRetirada,
-        timestampDevolucao
+        timestampDevolucao,
+        generatedContract,
+        hashToken
       );
 
       // Store generated details locally

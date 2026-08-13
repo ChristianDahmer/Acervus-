@@ -116,6 +116,18 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
     observacoes: '',
   });
 
+  const handleOpenAdd = () => {
+    setFormData({
+      nome: '',
+      telefone: '',
+      email: '',
+      cpfCnpj: '',
+      endereco: '',
+      observacoes: '',
+    });
+    setIsModalOpen(true);
+  };
+
   // Edit Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingCliente, setEditingCliente] = useState<Cliente | null>(null);
@@ -607,7 +619,7 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
 
           <button
             id="btn-cadastrar-cliente"
-            onClick={() => setIsModalOpen(true)}
+            onClick={handleOpenAdd}
             className="flex items-center justify-center gap-2 bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A0A0B] px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider shadow-lg shadow-[#D4AF37]/10 transition-all cursor-pointer w-full sm:w-auto shrink-0"
           >
             <UserPlus size={16} />
@@ -705,7 +717,7 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
             setCurrentPage(1);
           }}
           actionText="Cadastrar Cliente"
-          onAction={() => setIsModalOpen(true)}
+          onAction={handleOpenAdd}
         />
       ) : (
         <>

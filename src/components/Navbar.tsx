@@ -1,6 +1,6 @@
 import React from 'react';
 import { getAppLogoUrl, handleLogoError } from '../utils/logoUtils';
-import { Package, Calendar, Users, Share2, Cpu, Code2, Building2, Plus, DollarSign, Wrench, FileText, Sparkles, ChevronDown, FolderKanban, MessageSquare, Palette, HardDrive, ShieldCheck, Smartphone, Instagram, FileSpreadsheet, LogOut, Layers, Pin, Sliders } from 'lucide-react';
+import { Package, Calendar, Users, Share2, Cpu, Code2, Building2, Plus, DollarSign, Wrench, FileText, Sparkles, ChevronDown, FolderKanban, MessageSquare, Palette, HardDrive, ShieldCheck, Smartphone, Instagram, FileSpreadsheet, LogOut, Layers, Pin, Sliders, Database, BookOpen } from 'lucide-react';
 import { DispositivoAutorizado, ThemeConfig, EmpresaConfig } from '../types';
 import { getContrastTextColor } from '../utils/themeUtils';
 
@@ -85,17 +85,17 @@ export const Navbar: React.FC<NavbarProps> = ({
       title: 'Canais & Integrações',
       items: [
         { id: 'whatsapp', label: 'Mensagens WhatsApp', icon: MessageSquare, type: 'subtab', target: 'empresa' },
-        { id: 'govbr', label: 'Assinatura Gov.br', icon: FileText, type: 'subtab', target: 'empresa' },
         { id: 'instagram_sorteio', label: 'Sorteios Instagram', icon: Instagram, type: 'subtab', target: 'empresa' },
       ],
     },
     {
       title: 'Sistema & Segurança',
       items: [
-        { id: 'permissoes', label: 'Permissões de Acesso', icon: ShieldCheck, type: 'subtab', target: 'empresa' },
-        { id: 'dispositivos', label: 'Segurança & Terminais', icon: Smartphone, type: 'subtab', target: 'empresa' },
+        { id: 'permissoes', label: 'Permissões de Acesso', icon: Users, type: 'subtab', target: 'empresa' },
+        { id: 'dispositivos', label: 'Usuários Acesso', icon: Smartphone, type: 'subtab', target: 'empresa' },
         { id: 'sincronizacao', label: 'Sincronização & Worker', icon: Cpu, type: 'subtab', target: 'empresa' },
         { id: 'developer', label: 'Painel do Desenvolvedor', icon: Code2, type: 'subtab', target: 'empresa' },
+        { id: 'guia_arquitetura', label: 'Guia do Sistema & Arquitetura', icon: BookOpen, type: 'subtab', target: 'empresa', requiresGuiaFlag: true },
       ],
     },
   ];
@@ -134,13 +134,13 @@ export const Navbar: React.FC<NavbarProps> = ({
   });
 
   const isModuleAllowed = (moduleId: string) => {
-    if (authenticatedDevice?.nivelAcesso === 'DESENVOLVEDOR') {
-      return true;
+    // Regra Estrita: O painel do desenvolvedor e o guia de arquitetura estão disponíveis APENAS para usuário desenvolvedor
+    if (moduleId === 'developer' || moduleId === 'guia_arquitetura') {
+      return authenticatedDevice?.nivelAcesso === 'DESENVOLVEDOR';
     }
 
-    const isDevModeActive = localStorage.getItem('modo_desenvolvedor') === 'true';
-    if (!isDevModeActive && ['sincronizacao', 'developer'].includes(moduleId)) {
-      return false;
+    if (authenticatedDevice?.nivelAcesso === 'DESENVOLVEDOR') {
+      return true;
     }
 
     if (!authenticatedDevice) return true;
@@ -173,7 +173,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           }
           return item;
         })
-        .filter((item) => isModuleAllowed(item.id)),
+        .filter((item: any) => {
+          if (item.requiresGuiaFlag && !exibirGuiaArquitetura) return false;
+          return isModuleAllowed(item.id);
+        }),
     }))
     .filter((section) => section.items.length > 0);
 
@@ -206,21 +209,31 @@ export const Navbar: React.FC<NavbarProps> = ({
               </p>
               
               {/* Logged user label with one-line spacing */}
-              <div 
-                style={{
-                  color: themeConfig?.primaryColor || '#D4AF37',
-                  backgroundColor: `${themeConfig?.primaryColor || '#D4AF37'}15`,
-                  borderColor: `${themeConfig?.primaryColor || '#D4AF37'}30`,
-                }}
-                className="mt-2 text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-md border flex items-center gap-1.5 shadow-sm shadow-black/10 transition-all duration-200 w-fit"
-              >
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
                 <div 
-                  style={{ backgroundColor: themeConfig?.primaryColor || '#D4AF37' }}
-                  className="w-1.5 h-1.5 rounded-full animate-pulse shrink-0" 
-                />
-                <span className="max-w-[200px] truncate">
-                  {usuarioLogado} - {authenticatedDevice?.nomeDispositivo || 'Terminal Principal'}
-                </span>
+                  style={{
+                    color: themeConfig?.primaryColor || '#D4AF37',
+                    backgroundColor: `${themeConfig?.primaryColor || '#D4AF37'}15`,
+                    borderColor: `${themeConfig?.primaryColor || '#D4AF37'}30`,
+                  }}
+                  className="text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-md border flex items-center gap-1.5 shadow-sm shadow-black/10 transition-all duration-200 w-fit"
+                >
+                  <div 
+                    style={{ backgroundColor: themeConfig?.primaryColor || '#D4AF37' }}
+                    className="w-1.5 h-1.5 rounded-full animate-pulse shrink-0" 
+                  />
+                  <span className="max-w-[200px] truncate">
+                    {usuarioLogado} - {authenticatedDevice?.nomeDispositivo || 'Terminal Principal'}
+                  </span>
+                </div>
+
+                {/* System Environment Badge - exibido apenas no Modo Teste */}
+                {(empresaConfig?.ambienteSistema || 'producao') === 'teste' && (
+                  <div className="text-[9px] font-extrabold tracking-widest uppercase px-2 py-0.5 rounded-md border flex items-center gap-1 shadow-sm bg-amber-500/15 border-amber-500/40 text-amber-400">
+                    <span className="w-1.5 h-1.5 rounded-full animate-pulse bg-amber-400" />
+                    <span>MODO TESTE</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>

@@ -139,8 +139,18 @@ Gerado em: ${formatarDataBr(Date.now())}
 
           <div className="flex items-center space-x-2">
             <button
-              onClick={() => setIsGovBrModalOpen(true)}
-              className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500/20 text-emerald-400 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-lg shadow-emerald-500/10"
+              onClick={() => {
+                if (empresaConfig?.govBrConfig?.enabled) {
+                  setIsGovBrModalOpen(true);
+                }
+              }}
+              disabled={!empresaConfig?.govBrConfig?.enabled}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-lg ${
+                empresaConfig?.govBrConfig?.enabled
+                  ? 'bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500/20 text-emerald-400 cursor-pointer shadow-emerald-500/10'
+                  : 'bg-[#18181B] border border-[#27272A] text-[#71717A] cursor-not-allowed opacity-40'
+              }`}
+              title={empresaConfig?.govBrConfig?.enabled ? "Assinar Contrato digitalmente com Gov.br" : "Módulo de Assinatura Digital inativo nas configurações"}
             >
               <ShieldCheck size={14} />
               <span>Assinar com Gov.br</span>

@@ -12,7 +12,7 @@ import { InstagramSorteioModule } from './InstagramSorteioModule';
 import { WebFormModal } from './WebFormModal';
 import { PersonalizacaoAbasView } from './PersonalizacaoAbasView';
 import { PainelConfiguracaoView } from './PainelConfiguracaoView';
-import { saveDocument } from '../lib/firebaseSync';
+import { saveDocument, getActiveTenantId } from '../lib/firebaseSync';
 import {
   Building2,
   FileSpreadsheet,
@@ -27,6 +27,7 @@ import {
   Phone,
   Mail,
   User,
+  Plug,
   Hash,
   Sparkles,
   Palette,
@@ -72,6 +73,7 @@ import {
   ChevronDown,
   UserPlus,
   FolderKanban,
+  BookOpen,
   Cpu,
   Instagram,
   Terminal,
@@ -93,7 +95,7 @@ interface EmpresaConfigViewProps {
   onDeleteCategoria?: (id: string) => void;
   onUpdateItemCategoria?: (oldName: string, newName: string) => void;
   onBatchRemapCategory?: (sourceName: string, targetName: string) => void;
-  initialSubTab?: 'empresa' | 'painel_configuracao' | 'categorias' | 'personalizacao_abas' | 'whatsapp' | 'tema' | 'google_forms' | 'govbr' | 'permissoes' | 'dispositivos' | 'sincronizacao' | 'developer' | 'instagram_sorteio';
+  initialSubTab?: 'empresa' | 'painel_configuracao' | 'categorias' | 'personalizacao_abas' | 'whatsapp' | 'tema' | 'google_forms' | 'govbr' | 'permissoes' | 'dispositivos' | 'sincronizacao' | 'developer' | 'instagram_sorteio' | 'admin_dados' | 'guia_arquitetura';
   dispositivos?: DispositivoAutorizado[];
   onUpdateDispositivoStatus?: (id: string, newStatus: 'PENDENTE' | 'APROVADO' | 'REJEITADO' | 'REVOGADO', extraData?: Partial<DispositivoAutorizado>) => void;
   onDeleteDispositivo?: (id: string) => void;
@@ -115,6 +117,7 @@ interface EmpresaConfigViewProps {
     dataDevolucao: number
   ) => void;
   authenticatedDevice?: DispositivoAutorizado | null;
+  onNavigateToCreateOrcamento?: () => void;
 }
 
 export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
@@ -145,10 +148,18 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
   onRefreshData = async () => {},
   onCreateGoogleForm = () => {},
   onSimulateCustomerSubmit = () => {},
+  onNavigateToCreateOrcamento,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'empresa' | 'painel_configuracao' | 'categorias' | 'personalizacao_abas' | 'whatsapp' | 'tema' | 'google_forms' | 'govbr' | 'permissoes' | 'dispositivos' | 'sincronizacao' | 'developer' | 'instagram_sorteio'>(
+  const [activeSubTab, setActiveSubTab] = useState<'empresa' | 'painel_configuracao' | 'categorias' | 'personalizacao_abas' | 'whatsapp' | 'tema' | 'google_forms' | 'govbr' | 'permissoes' | 'dispositivos' | 'sincronizacao' | 'developer' | 'instagram_sorteio' | 'admin_dados' | 'guia_arquitetura'>(
     initialSubTab
   );
+
+  // Isolamento Multi-Tenant estrito para dispositivos/operadores:
+  const tenantCnpjClean = (empresaConfig?.cnpj || '').replace(/\D/g, '');
+  const filteredDispositivos = dispositivos.filter(d => {
+    const devCnpjClean = (d.cnpjEmpresa || '').replace(/\D/g, '');
+    return devCnpjClean === tenantCnpjClean;
+  });
 
   useEffect(() => {
     if (initialSubTab) {
@@ -199,11 +210,11 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
     },
     permissoes: {
       title: 'Permissões de Acesso',
-      subtitle: 'Controle em grupo único e unificado os acessos a funcionalidades e recursos do aplicativo.',
-      icon: ShieldCheck,
+      subtitle: 'Controle corporativo de acessos, operadores e permissões de usuários do sistema.',
+      icon: Users,
     },
     dispositivos: {
-      title: 'Segurança & Terminais MDM',
+      title: 'Usuários Acesso',
       subtitle: 'Monitore, aprove ou revogue acessos de tablets e smartphones Android autorizados na locadora.',
       icon: Smartphone,
     },
@@ -217,16 +228,24 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
       subtitle: 'Importe comentários e realize sorteios em tempo real de campanhas promocionais do seu acervo.',
       icon: Instagram,
     },
+    admin_dados: {
+      title: 'Gestão de Dados DB (Cloud SQL)',
+      subtitle: 'Administração direta das tabelas relacionais no Cloud SQL PostgreSQL com isolamento Multi-Tenant.',
+      icon: Database,
+    },
     developer: {
       title: 'Painel do Desenvolvedor Android',
       subtitle: 'Área restrita para injeção de latência simulada, simulação de erros SQLite e testes rápidos.',
       icon: Code2,
     },
-
+    guia_arquitetura: {
+      title: 'Guia do Sistema & Arquitetura',
+      subtitle: 'Documentação técnica oficial, Clean Architecture, persistência Room/SQLite e especificações do Acervus Core.',
+      icon: BookOpen,
+    },
   };
 
   // Google Drive Modal States & Options
-  const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
   const [driveNotice, setDriveNotice] = useState<string | null>(null);
   const [isLoggingInGoogle, setIsLoggingInGoogle] = useState(false);
@@ -271,8 +290,8 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
   const [novoUsuarioTelefone, setNovoUsuarioTelefone] = useState('');
   const [novoUsuarioCnpj, setNovoUsuarioCnpj] = useState('');
   const [novoUsuarioNivel, setNovoUsuarioNivel] = useState<'OPERADOR' | 'GERENTE' | 'ADMINISTRADOR' | 'DESENVOLVEDOR'>('OPERADOR');
-  const [novoUsuarioAparelho, setNovoUsuarioAparelho] = useState('Smartphone Corporativo');
-  const [novoUsuarioSenha, setNovoUsuarioSenha] = useState('123456');
+  const [novoUsuarioAparelho, setNovoUsuarioAparelho] = useState('');
+  const [novoUsuarioSenha, setNovoUsuarioSenha] = useState('');
   const [novoUsuarioUuid, setNovoUsuarioUuid] = useState('');
   const [novoUsuarioCreatedSeed, setNovoUsuarioCreatedSeed] = useState<string | null>(null);
 
@@ -357,7 +376,6 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
       displayName: name,
       connectedAt: Date.now(),
     });
-    setIsAccountModalOpen(false);
     setDriveNotice(`Conta alterada para ${email} com sucesso!`);
     setTimeout(() => setDriveNotice(null), 3500);
   };
@@ -513,12 +531,15 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
     );
   };
 
-  // Permissions Control Panel State (All disabled by default on first use)
+  // Permissions Control Panel State (All enabled by default)
   const [androidPermissions, setAndroidPermissions] = useState(() => {
     const saved = localStorage.getItem('android_permissions_state');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
       } catch (e) {
         // fallback
       }
@@ -529,7 +550,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
         name: 'Acesso à Câmera',
         label: 'Câmera do Dispositivo',
         description: 'Permite capturar fotos dos itens do acervo diretamente pela câmera.',
-        granted: false,
+        granted: true,
         category: 'Hardware',
       },
       {
@@ -537,7 +558,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
         name: 'Galeria de Fotos',
         label: 'Acesso à Galeria de Fotos',
         description: 'Permite escolher fotos da galeria do dispositivo para associar aos produtos do inventário.',
-        granted: false,
+        granted: true,
         category: 'Armazenamento',
       },
       {
@@ -545,7 +566,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
         name: 'Alertas e Notificações',
         label: 'Notificações de Reservas',
         description: 'Alertas sobre vencimento de contratos, devoluções e confirmações.',
-        granted: false,
+        granted: true,
         category: 'Sistema',
       },
       {
@@ -553,7 +574,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
         name: 'Lembretes Agendados',
         label: 'Lembretes de Devolução',
         description: 'Dispara lembretes de devolução de equipamentos e montagem de eventos.',
-        granted: false,
+        granted: true,
         category: 'Sistema',
       },
       {
@@ -561,7 +582,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
         name: 'Armazenamento de Arquivos',
         label: 'Exportação de Contratos PDF',
         description: 'Permite salvar relatórios e contratos PDF na memória do dispositivo.',
-        granted: false,
+        granted: true,
         category: 'Armazenamento',
       },
       {
@@ -569,7 +590,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
         name: 'Agenda de Contatos',
         label: 'Acesso aos Contatos',
         description: 'Permite buscar e importar clientes da agenda do celular Android.',
-        granted: false,
+        granted: true,
         category: 'Privacidade',
       },
     ];
@@ -595,9 +616,33 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
     });
   };
 
+  const handleGrantAllPermissions = () => {
+    setAndroidPermissions((prev) => {
+      const updated = prev.map((perm) => ({ ...perm, granted: true }));
+      localStorage.setItem('android_permissions_state', JSON.stringify(updated));
+      return updated;
+    });
+    setPermissionNotice('Todas as permissões foram ATIVADAS de uma vez.');
+    setTimeout(() => setPermissionNotice(null), 3500);
+  };
+
+  const handleRevokeAllPermissions = () => {
+    setAndroidPermissions((prev) => {
+      const updated = prev.map((perm) => ({ ...perm, granted: false }));
+      localStorage.setItem('android_permissions_state', JSON.stringify(updated));
+      return updated;
+    });
+    setPermissionNotice('Todas as permissões foram REVOGADAS de uma vez.');
+    setTimeout(() => setPermissionNotice(null), 3500);
+  };
+
   // Empresa Form state
   const [empresaData, setEmpresaData] = useState<EmpresaConfig>({ ...empresaConfig });
   const [isEmpresaSaved, setIsEmpresaSaved] = useState(false);
+
+  useEffect(() => {
+    setEmpresaData({ ...empresaConfig });
+  }, [empresaConfig]);
 
   // Theme Form state
   const [themeData, ThemeData] = useState<ThemeConfig>({ ...themeConfig });
@@ -852,19 +897,73 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
               </div>
 
               {/* Nome do Representante */}
-              <div>
-                <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center gap-1">
-                  <User size={14} className="text-[#D4AF37]" /> Nome do Representante Legal
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={empresaData.nomeRepresentante}
-                  onChange={(e) => handleEmpresaChange('nomeRepresentante', e.target.value)}
-                  onFocus={handleFocusScroll}
-                  placeholder="Nome do Sócio ou Gestor do Contrato"
-                  className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all"
-                />
+              <div className="space-y-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block font-medium text-[#A1A1AA] flex items-center gap-1">
+                      <User size={14} className="text-[#D4AF37]" /> Nome do Representante Legal
+                    </label>
+                    <button
+                      type="button"
+                      id="btn-add-representante"
+                      onClick={() => {
+                        const currentList = empresaData.representantesAdicionais || [];
+                        handleEmpresaChange('representantesAdicionais', [...currentList, '']);
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-[#D4AF37] bg-[#D4AF37]/10 hover:bg-[#D4AF37]/20 border border-[#D4AF37]/30 rounded-lg transition-all cursor-pointer"
+                      title="Adicionar Novo Responsável"
+                    >
+                      <Plus size={14} />
+                      <span>Responsável</span>
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    value={empresaData.nomeRepresentante}
+                    onChange={(e) => handleEmpresaChange('nomeRepresentante', e.target.value)}
+                    onFocus={handleFocusScroll}
+                    placeholder="Nome do Sócio ou Gestor do Contrato"
+                    className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all"
+                  />
+                </div>
+
+                {/* Campos para Responsáveis Adicionais */}
+                {(empresaData.representantesAdicionais || []).map((rep, index) => (
+                  <div key={index} className="space-y-1.5 animate-fadeIn">
+                    <div className="flex items-center justify-between">
+                      <label className="block font-medium text-[#A1A1AA] flex items-center gap-1">
+                        <User size={14} className="text-[#A1A1AA]" /> Novo Responsável #{index + 1}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const currentList = [...(empresaData.representantesAdicionais || [])];
+                          currentList.splice(index, 1);
+                          handleEmpresaChange('representantesAdicionais', currentList);
+                        }}
+                        className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-bold text-red-400 bg-red-400/10 hover:bg-red-400/20 border border-red-400/20 rounded transition-all cursor-pointer"
+                        title="Remover Responsável"
+                      >
+                        <X size={12} />
+                        <span>Remover</span>
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      value={rep}
+                      onChange={(e) => {
+                        const currentList = [...(empresaData.representantesAdicionais || [])];
+                        currentList[index] = e.target.value;
+                        handleEmpresaChange('representantesAdicionais', currentList);
+                      }}
+                      onFocus={handleFocusScroll}
+                      placeholder="Nome do Novo Responsável"
+                      className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all"
+                    />
+                  </div>
+                ))}
               </div>
 
               {/* Endereço Completo */}
@@ -877,6 +976,16 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                   rows={2}
                   value={empresaData.enderecoCompleto}
                   onChange={(e) => handleEmpresaChange('enderecoCompleto', e.target.value)}
+                  onBlur={() => {
+                    const address = empresaData.enderecoCompleto?.trim();
+                    if (address) {
+                      const formattedAddress = encodeURIComponent(address);
+                      const constructedUrl = `https://maps.google.com/?q=${formattedAddress}`;
+                      if ((empresaData.linkMapaLocalizacao || '').trim() !== constructedUrl) {
+                        handleEmpresaChange('linkMapaLocalizacao', constructedUrl);
+                      }
+                    }
+                  }}
                   onFocus={handleFocusScroll}
                   placeholder="Rua, Número, Bairro, Cidade - UF, CEP"
                   className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all"
@@ -1069,6 +1178,8 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
           empresaConfig={empresaData}
           onSaveConfig={onSaveConfig}
           authenticatedDevice={authenticatedDevice}
+          googleAccount={googleAccount}
+          onUpdateGoogleAccount={onUpdateGoogleAccount}
         />
       )}
 
@@ -1661,9 +1772,29 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                   <p className="text-[11px] text-[#A1A1AA]">Todas as permissões do aplicativo unificadas em uma estrutura única</p>
                 </div>
               </div>
-              <span className="text-[10px] text-[#D4AF37] bg-[#111113] px-2.5 py-1 rounded-lg border border-[#27272A] font-mono font-bold shrink-0">
-                {androidPermissions.length} Permissões Integradas
-              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleGrantAllPermissions}
+                  className="px-3 py-1.5 bg-[#D4AF37] hover:bg-[#c4a02e] text-black text-xs font-bold rounded-lg shadow-md transition-all cursor-pointer flex items-center gap-1.5"
+                  title="Ativar todas as permissões de uma vez só"
+                >
+                  <ToggleRight size={15} />
+                  <span>Ativar Todas</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRevokeAllPermissions}
+                  className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5"
+                  title="Revogar todas as permissões de uma vez só"
+                >
+                  <ToggleLeft size={15} />
+                  <span>Revogar Todas</span>
+                </button>
+                <span className="text-[10px] text-[#D4AF37] bg-[#111113] px-2.5 py-1 rounded-lg border border-[#27272A] font-mono font-bold shrink-0">
+                  {androidPermissions.length} Permissões
+                </span>
+              </div>
             </div>
 
             {/* Permissions Grid - Single Unified Group */}
@@ -1757,14 +1888,15 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
               <button
                 type="button"
                 onClick={() => {
+                  setNovoUsuarioNome('');
+                  setNovoUsuarioEmail('');
+                  setNovoUsuarioNivel('OPERADOR');
+                  setNovoUsuarioAparelho('');
+                  setNovoUsuarioSenha('');
                   setNovoUsuarioCreatedSeed(null);
                   setNovoUsuarioUuid('DEV-89A-' + Math.random().toString(36).substring(2, 8).toUpperCase());
-                  if (!novoUsuarioCnpj && empresaConfig?.cnpj) {
-                    setNovoUsuarioCnpj(empresaConfig.cnpj);
-                  }
-                  if (!novoUsuarioTelefone && empresaConfig?.telefoneWhatsapp) {
-                    setNovoUsuarioTelefone(empresaConfig.telefoneWhatsapp);
-                  }
+                  setNovoUsuarioCnpj(empresaConfig?.cnpj || '');
+                  setNovoUsuarioTelefone('');
                   setIsNovoUsuarioModalOpen(true);
                 }}
                 className="px-4 py-2.5 bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A0A0B] rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center gap-2 shrink-0 shadow-lg shadow-[#D4AF37]/10"
@@ -1775,7 +1907,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
             </div>
 
             {/* List and Actions */}
-            {dispositivos.length === 0 ? (
+            {filteredDispositivos.length === 0 ? (
               <div className="text-center py-12 border border-dashed border-[#27272A] rounded-xl text-[#A1A1AA] text-sm space-y-2">
                 <Smartphone size={32} className="mx-auto text-[#71717A] animate-pulse" />
                 <p className="font-semibold text-white">Nenhum aparelho registrado ou solicitando acesso</p>
@@ -1790,7 +1922,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                   <div className="bg-[#18181B] border border-[#27272A] p-4 rounded-xl flex items-center justify-between">
                     <div>
                       <span className="text-[10px] text-[#A1A1AA] font-bold uppercase block">Dispositivos Ativos</span>
-                      <span className="text-xl font-bold text-white">{dispositivos.filter(d => d.status === 'APROVADO').length}</span>
+                      <span className="text-xl font-bold text-white">{filteredDispositivos.filter(d => d.status === 'APROVADO').length}</span>
                     </div>
                     <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
                       <CheckCircle size={18} />
@@ -1799,7 +1931,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                   <div className="bg-[#18181B] border border-[#27272A] p-4 rounded-xl flex items-center justify-between">
                     <div>
                       <span className="text-[10px] text-[#A1A1AA] font-bold uppercase block">Solicitações Pendentes</span>
-                      <span className="text-xl font-bold text-white">{dispositivos.filter(d => d.status === 'PENDENTE').length}</span>
+                      <span className="text-xl font-bold text-white">{filteredDispositivos.filter(d => d.status === 'PENDENTE').length}</span>
                     </div>
                     <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400">
                       <Clock size={18} />
@@ -1808,7 +1940,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                   <div className="bg-[#18181B] border border-[#27272A] p-4 rounded-xl flex items-center justify-between">
                     <div>
                       <span className="text-[10px] text-[#A1A1AA] font-bold uppercase block">Total de Dispositivos</span>
-                      <span className="text-xl font-bold text-white">{dispositivos.length}</span>
+                      <span className="text-xl font-bold text-white">{filteredDispositivos.length}</span>
                     </div>
                     <div className="p-2 rounded-lg bg-[#D4AF37]/10 text-[#D4AF37]">
                       <Smartphone size={18} />
@@ -1832,8 +1964,8 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#27272A]">
-                      {dispositivos.map((dev) => (
-                        <tr key={dev.id} className="hover:bg-[#111113]/40 transition-colors">
+                      {filteredDispositivos.map((dev, idx) => (
+                        <tr key={`${dev.id || 'dev'}-${idx}`} className="hover:bg-[#111113]/40 transition-colors">
                           <td className="p-4 space-y-1">
                             <div className="flex items-center gap-2">
                               <Smartphone size={14} className="text-[#D4AF37]" />
@@ -1845,6 +1977,16 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                           </td>
                           <td className="p-4 font-medium text-white">
                             <div className="flex items-center gap-1.5">
+                              {true && (
+                                <Plug
+                                  size={13}
+                                  className={`${
+                                    dev.ultimoAcesso && Date.now() - dev.ultimoAcesso < 60 * 1000
+                                      ? 'text-emerald-500'
+                                      : 'text-gray-600'
+                                  }`}
+                                />
+                              )}
                               <User size={13} className="text-[#D4AF37]" />
                               <span>{dev.usuario || empresaData.nomeRepresentante || 'Representante Legal'}</span>
                             </div>
@@ -1913,12 +2055,34 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                               )}
 
                               {dev.status === 'APROVADO' && (
-                                <button
-                                  onClick={() => onUpdateDispositivoStatus(dev.id, 'REVOGADO')}
-                                  className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase cursor-pointer"
-                                >
-                                  Revogar Acesso
-                                </button>
+                                <div className="flex items-center gap-2 justify-end">
+                                  <button
+                                    onClick={() => onUpdateDispositivoStatus(dev.id, 'REVOGADO')}
+                                    className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase cursor-pointer"
+                                  >
+                                    Revogar Acesso
+                                  </button>
+                                  <button
+                                    onClick={() => onUpdateDispositivoStatus(dev.id, 'APROVADO', { isTerminalBlocked: !dev.isTerminalBlocked })}
+                                    className={`${dev.isTerminalBlocked ? 'bg-red-500 text-white' : 'bg-gray-700 text-gray-300'} hover:opacity-90 px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase cursor-pointer`}
+                                  >
+                                    {dev.isTerminalBlocked ? 'Desbloquear Term.' : 'Bloquear Term.'}
+                                  </button>
+                                  <button
+                                    onClick={() => onUpdateDispositivoStatus(dev.id, 'APROVADO', { isUserBlocked: !dev.isUserBlocked })}
+                                    className={`${dev.isUserBlocked ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-300'} hover:opacity-90 px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase cursor-pointer`}
+                                    title="Alterna o estado de bloqueio de acesso deste operador (Gestão administrativa)."
+                                  >
+                                    {dev.isUserBlocked ? 'Desbloquear Usuário' : 'Bloquear Usuário'}
+                                  </button>
+                                  <button
+                                    onClick={() => onUpdateDispositivoStatus(dev.id, dev.status, { usuario: undefined, email: undefined, senha: undefined })}
+                                    className="bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-400 border border-yellow-500/20 px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase cursor-pointer"
+                                    title="Encerra a sessão ativa deste operador imediatamente (Ação direta de emergência)."
+                                  >
+                                    Encerrar Sessão
+                                  </button>
+                                </div>
                               )}
 
                               {(dev.status === 'REVOGADO' || dev.status === 'REJEITADO') && (
@@ -1972,6 +2136,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
             onDeleteWebForm={onDeleteWebForm}
             empresaConfig={empresaConfig}
             hideHeader
+            onNavigateToCreateOrcamento={onNavigateToCreateOrcamento}
           />
         </div>
       )}
@@ -1983,127 +2148,179 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
 
       {/* TAB 8: PAINEL DO DESENVOLVEDOR */}
       {activeSubTab === 'developer' && (
-        <DeveloperTestPanel 
-          itens={itens} 
-          clientes={clientes} 
-          reservas={reservas} 
-          webForms={webForms} 
-          dispositivos={dispositivos} 
-          empresaConfig={empresaConfig}
-          onTriggerWorkerSync={onTriggerWorkerSync}
-          onRefreshData={onRefreshData}
-          hideHeader
-        />
+        authenticatedDevice?.nivelAcesso === 'DESENVOLVEDOR' ? (
+          <DeveloperTestPanel 
+            itens={itens} 
+            clientes={clientes} 
+            reservas={reservas} 
+            webForms={webForms} 
+            dispositivos={dispositivos} 
+            empresaConfig={empresaConfig}
+            onTriggerWorkerSync={onTriggerWorkerSync}
+            onRefreshData={onRefreshData}
+            onSaveConfig={onSaveConfig}
+            hideHeader
+          />
+        ) : (
+          <div className="bg-[#111113] border border-amber-500/30 rounded-2xl p-8 text-center space-y-4 max-w-xl mx-auto my-12 shadow-2xl animate-fadeIn">
+            <div className="p-4 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-full w-16 h-16 mx-auto flex items-center justify-center">
+              <ShieldAlert size={32} />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-lg font-serif italic font-extrabold text-white">
+                Acesso Restrito ao Desenvolvedor
+              </h3>
+              <p className="text-xs text-[#A1A1AA] leading-relaxed">
+                O <strong>Painel do Desenvolvedor</strong> está disponível exclusivamente para usuários autenticados com o nível de acesso <strong>DESENVOLVEDOR</strong>.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('empresa')}
+              className="px-6 py-2.5 bg-[#18181B] hover:bg-[#27272A] border border-[#27272A] text-white text-xs font-bold rounded-xl transition-all cursor-pointer inline-flex items-center gap-2"
+            >
+              <Building2 size={16} />
+              <span>Voltar aos Dados da Empresa</span>
+            </button>
+          </div>
+        )
       )}
-
-
 
       {/* TAB 10: SORTEIOS INSTAGRAM API */}
       {activeSubTab === 'instagram_sorteio' && (
-        <InstagramSorteioModule />
+        <InstagramSorteioModule empresaConfig={empresaData} />
       )}
 
-      {/* GOOGLE ACCOUNT SWITCHER MODAL */}
-      {isAccountModalOpen && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-[#18181B] border border-[#27272A] w-full max-w-md rounded-2xl p-6 space-y-5 shadow-2xl relative">
-            <button
-              onClick={() => setIsAccountModalOpen(false)}
-              className="absolute top-4 right-4 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer"
-            >
-              <X size={18} />
-            </button>
-
-            <div className="flex items-center gap-3 border-b border-[#27272A] pb-4">
-              <div className="w-10 h-10 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] flex items-center justify-center font-bold text-sm border border-[#D4AF37]/30 shrink-0">
-                G
-              </div>
-              <div>
-                <h3 className="text-white text-sm font-bold">Vincular Conta do Google Drive</h3>
-                <p className="text-[#A1A1AA] text-xs">
-                  Conecte sua conta de forma segura para usar o Google Picker e salvar formulários.
-                </p>
-              </div>
+      {/* TAB 12: GUIA DO SISTEMA & ARQUITETURA */}
+      {activeSubTab === 'guia_arquitetura' && (
+        authenticatedDevice?.nivelAcesso === 'DESENVOLVEDOR' ? (
+          <div className="bg-[#111113] border border-[#27272A] rounded-2xl p-6 shadow-2xl space-y-6 animate-fadeIn">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-[#27272A] pb-4">
+            <div>
+              <h3 className="font-serif italic text-white text-xl flex items-center gap-2">
+                <BookOpen className="text-[#D4AF37]" size={22} />
+                Guia do Sistema & Arquitetura (Acervus Core)
+              </h3>
+              <p className="text-xs text-[#A1A1AA] mt-1">
+                Especificação técnica oficial, Clean Architecture, banco local Room/SQLite e fluxos operacionais.
+              </p>
             </div>
+            <button
+              onClick={() => {
+                const text = `# ACERVUS CORE (GGERE) - ESPECIFICAÇÃO TÉCNICA
+Versão: 2.5.0-ENTERPRISE
+Arquitetura: Clean Architecture + MVVM + Dagger Hilt + Jetpack Compose
+Persistência: Android Room ORM / SQLite & Google Cloud Firestore
+`;
+                navigator.clipboard.writeText(text);
+                alert('Documentação copiada para a área de transferência!');
+              }}
+              className="px-4 py-2 bg-[#18181B] hover:bg-[#27272A] border border-[#27272A] text-[#D4AF37] rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-md"
+            >
+              <span>Copiar Especificação</span>
+            </button>
+          </div>
 
-            <div className="space-y-4">
-              {/* Opção 1: Login OAuth Real (Recomendado) */}
-              <div className="bg-[#111113] p-4 rounded-xl border border-emerald-500/10 space-y-3">
-                <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">Conexão Segura Oficial</span>
-                <p className="text-[11px] text-[#A1A1AA] leading-relaxed">
-                  Recomendado para autorizar o acesso direto ao seu Google Drive, permitindo o uso do Google Picker de arquivos e pastas.
-                </p>
-                <button
-                  type="button"
-                  disabled={isLoggingInGoogle}
-                  onClick={async () => {
-                    try {
-                      setIsLoggingInGoogle(true);
-                      console.log('[EmpresaConfig] Starting Google OAuth login popup flow...');
-                      const result = await googleSignIn();
-                      if (result && result.user) {
-                        console.log('[EmpresaConfig] Google Sign-in successful! User:', result.user.email);
-                        handleSelectAccount(result.user.email || 'conta.google@gmail.com', result.user.displayName || 'Usuário Google');
-                      }
-                    } catch (err: any) {
-                      console.error('[EmpresaConfig] Google Auth popup error:', err);
-                      alert('Não foi possível conectar com o Google: ' + (err.message || 'Pop-up bloqueado ou erro de rede.'));
-                    } finally {
-                      setIsLoggingInGoogle(false);
-                    }
-                  }}
-                  className="w-full flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white p-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
-                >
-                  <LogIn size={15} />
-                  <span>{isLoggingInGoogle ? 'Conectando...' : 'Fazer Login Real com Google'}</span>
-                </button>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+            <div className="bg-[#18181B] p-4 rounded-xl border border-[#27272A] space-y-2">
+              <div className="text-[#D4AF37] font-bold flex items-center gap-1.5">
+                <Layers size={16} /> Clean Architecture
               </div>
-
-              {/* Divisor Visual */}
-              <div className="relative flex py-1 items-center">
-                <div className="flex-grow border-t border-[#27272A]"></div>
-                <span className="flex-shrink mx-3 text-[#71717A] text-[10px] font-bold uppercase tracking-wider">ou simular conta</span>
-                <div className="flex-grow border-t border-[#27272A]"></div>
+              <p className="text-[#A1A1AA] leading-relaxed">
+                Separação rigorosa entre Presentation (Jetpack Compose + MVVM), Domain (Use Cases puros) e Data (Room ORM + Firestore).
+              </p>
+            </div>
+            <div className="bg-[#18181B] p-4 rounded-xl border border-[#27272A] space-y-2">
+              <div className="text-[#D4AF37] font-bold flex items-center gap-1.5">
+                <HardDrive size={16} /> Offline-First Room & SQLite
               </div>
+              <p className="text-[#A1A1AA] leading-relaxed">
+                Operações ACID locais garantem funcionamento integral em galpões sem internet, com sincronização em background.
+              </p>
+            </div>
+            <div className="bg-[#18181B] p-4 rounded-xl border border-[#27272A] space-y-2">
+              <div className="text-[#D4AF37] font-bold flex items-center gap-1.5">
+                <ShieldCheck size={16} /> Segurança Multi-Tenant & MDM
+              </div>
+              <p className="text-[#A1A1AA] leading-relaxed">
+                Isolamento estrito por `tenantId` e vínculo de hardware quádruplo (IMEI, CNPJ, Telefone e Usuário).
+              </p>
+            </div>
+          </div>
 
-              {/* Opção 2: Simulação Manual (Para testes sem popup) */}
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-[11px] font-semibold text-[#A1A1AA] mb-1.5">
-                    E-mail da Conta para Simulação
-                  </label>
-                  <input
-                    type="email"
-                    placeholder="ex: suaempresa@gmail.com"
-                    value={customAccountEmail}
-                    onChange={(e) => setCustomAccountEmail(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-[#111113] border border-[#27272A] rounded-xl text-xs text-white focus:border-[#D4AF37] focus:outline-none placeholder-[#71717A]"
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (customAccountEmail.trim() && customAccountEmail.includes('@')) {
-                      const email = customAccountEmail.trim();
-                      const prefix = email.split('@')[0];
-                      const displayName = prefix
-                        .split('.')
-                        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-                        .join(' ');
-                      
-                      handleSelectAccount(email, displayName);
-                    } else {
-                      alert('Por favor, informe um e-mail válido para a simulação.');
-                    }
-                  }}
-                  className="w-full flex items-center justify-center gap-2 bg-[#27272A] hover:bg-[#3F3F46] text-white p-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer border border-[#3F3F46]"
-                >
-                  <span>Vincular Manualmente (Simulado)</span>
-                </button>
+          <div className="bg-[#18181B] rounded-xl border border-[#27272A] p-5 space-y-4">
+            <h4 className="font-bold text-white text-sm flex items-center gap-2">
+              <Code2 className="text-[#D4AF37]" size={18} /> Sumário Executivo & Módulos da Plataforma
+            </h4>
+            <div className="space-y-3 text-xs text-[#E4E4E7] leading-relaxed">
+              <div className="border-l-2 border-[#D4AF37] pl-3 py-1 space-y-1">
+                <p className="font-semibold text-white">1. Propósito do Sistema</p>
+                <p className="text-[#A1A1AA]">Automatizar a cadeia de locação de mobiliários e decorações para eventos, eliminando overbooking e reduzindo o tempo de fechamento de contratos.</p>
+              </div>
+              <div className="border-l-2 border-[#D4AF37] pl-3 py-1 space-y-1">
+                <p className="font-semibold text-white">2. Audio Engine v2 & Voz em Tempo Real</p>
+                <p className="text-[#A1A1AA]">Suporte a interrupções (Barge-In), cancelamento de eco por hardware e síntese de voz humanizada em Português do Brasil.</p>
+              </div>
+              <div className="border-l-2 border-[#D4AF37] pl-3 py-1 space-y-1">
+                <p className="font-semibold text-white">3. Assinatura Gov.br (Lei 14.063/2020)</p>
+                <p className="text-[#A1A1AA]">Geração de envelopes PKCS#7 / CMS com hash SHA-256 e validação oficial ICP-Brasil para contratos e orçamentos.</p>
+              </div>
               </div>
             </div>
           </div>
+        ) : (
+          <div className="bg-[#111113] border border-amber-500/30 rounded-2xl p-8 text-center space-y-4 max-w-xl mx-auto my-12 shadow-2xl animate-fadeIn">
+            <div className="p-4 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-full w-16 h-16 mx-auto flex items-center justify-center">
+              <ShieldAlert size={32} />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-lg font-serif italic font-extrabold text-white">
+                Acesso Restrito ao Desenvolvedor
+              </h3>
+              <p className="text-xs text-[#A1A1AA] leading-relaxed">
+                O <strong>Guia do Sistema & Arquitetura</strong> está disponível exclusivamente para usuários autenticados com o nível de acesso <strong>DESENVOLVEDOR</strong>.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('empresa')}
+              className="px-6 py-2.5 bg-[#18181B] hover:bg-[#27272A] border border-[#27272A] text-white text-xs font-bold rounded-xl transition-all cursor-pointer inline-flex items-center gap-2"
+            >
+              <Building2 size={16} />
+              <span>Voltar aos Dados da Empresa</span>
+            </button>
+          </div>
+        )
+      )}
+
+      {/* TAB 11: GESTÃO DE DADOS BANCO DE DADOS CLOUD SQL */}
+      {activeSubTab === 'admin_dados' && (
+        <div className="bg-[#111113] border border-[#27272A] rounded-2xl p-8 text-center space-y-4 max-w-2xl mx-auto my-8 shadow-2xl animate-fadeIn">
+          <div className="p-4 bg-[#D4AF37]/10 border border-[#D4AF37]/30 text-[#D4AF37] rounded-full w-16 h-16 mx-auto flex items-center justify-center">
+            <Database size={32} />
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-lg font-serif italic font-extrabold text-white">
+              Explorador & Gestor do Banco de Dados Unificado
+            </h3>
+            <p className="text-xs text-[#A1A1AA] leading-relaxed">
+              A ferramenta de gestão de banco de dados foi unificada e centralizada com recursos avançados (Índices, Visões SQL, Diagrama ERD e Console SQL) exclusivamente no <strong>Painel do Desenvolvedor</strong>.
+            </p>
+          </div>
+          {authenticatedDevice?.nivelAcesso === 'DESENVOLVEDOR' ? (
+            <button
+              type="button"
+              onClick={() => setActiveSubTab('developer')}
+              className="px-6 py-3 bg-[#D4AF37] hover:bg-[#c2a032] text-black font-extrabold text-xs rounded-xl transition-all shadow-lg cursor-pointer inline-flex items-center gap-2"
+            >
+              <Code2 size={16} />
+              <span>Abrir Explorador & Gestor DB no Painel do Desenvolvedor</span>
+            </button>
+          ) : (
+            <div className="p-3 bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs rounded-xl font-medium inline-block font-mono">
+              🔒 Requer nível de acesso DESENVOLVEDOR para acessar o Painel do Desenvolvedor.
+            </div>
+          )}
         </div>
       )}
 
@@ -2630,33 +2847,36 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                   />
                 </div>
 
-                {/* CNPJ Empresa & Telefone */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-[#A1A1AA] flex items-center gap-1.5">
-                      <Building2 size={14} className="text-[#D4AF37]" /> CNPJ do Cliente/Empresa
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={novoUsuarioCnpj}
-                      onChange={(e) => setNovoUsuarioCnpj(e.target.value)}
-                      placeholder="Ex: 45.678.910/0001-23"
-                      className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
-                    />
-                  </div>
+                {/* CNPJ Empresa */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-[#A1A1AA] flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Building2 size={14} className="text-[#D4AF37]" /> CNPJ da Empresa
+                    </span>
+                    <span className="text-[10px] text-[#A1A1AA] italic">(Vinculado)</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    disabled
+                    value={novoUsuarioCnpj}
+                    onChange={(e) => setNovoUsuarioCnpj(e.target.value)}
+                    placeholder="Ex: 45.678.910/0001-23"
+                    className="w-full px-3.5 py-2.5 bg-[#18181B]/50 border border-[#27272A] rounded-xl text-xs text-[#71717A] placeholder-[#71717A] cursor-not-allowed font-mono focus:outline-none"
+                  />
+                </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-[#A1A1AA] flex items-center gap-1.5">
-                      <Phone size={14} className="text-[#D4AF37]" /> Telefone / WhatsApp
-                    </label>
-                    <PhoneInput
-                      value={novoUsuarioTelefone}
-                      onChange={(val) => setNovoUsuarioTelefone(val)}
-                      required
-                      placeholder="11 99999-8888"
-                    />
-                  </div>
+                {/* Telefone / WhatsApp */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-[#A1A1AA] flex items-center gap-1.5">
+                    <Phone size={14} className="text-[#D4AF37]" /> Telefone / WhatsApp
+                  </label>
+                  <PhoneInput
+                    value={novoUsuarioTelefone}
+                    onChange={(val) => setNovoUsuarioTelefone(val)}
+                    required
+                    placeholder="11 99999-8888"
+                  />
                 </div>
 
                 {/* Senha & Nível de Acesso */}

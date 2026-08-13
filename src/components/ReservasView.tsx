@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Cliente, ReservaComItens, StatusReserva, ListVisibilityConfig, FormularioWeb, EmpresaConfig } from '../types';
 import { formatarDataBr, formatarMoeda } from '../utils/whatsappTemplates';
 import { OrcamentoReservaModal } from './OrcamentoReservaModal';
+import { NfseFaturamentoModal } from './NfseFaturamentoModal';
 import {
   Calendar as CalendarIcon,
   FileText,
@@ -21,6 +22,7 @@ import {
   LayoutGrid,
   List,
   Sparkles,
+  Receipt,
 } from 'lucide-react';
 import { StandardListControls, StandardPagination, StandardEmptyState } from './StandardListContainer';
 
@@ -34,6 +36,7 @@ interface ReservasViewProps {
   onOpenContratoPdf: (reservaComItens: ReservaComItens) => void;
   onOpenWhatsApp: (reservaComItens: ReservaComItens) => void;
   listVisibility?: ListVisibilityConfig;
+  onUpdateNfse?: (reservaId: number, chaveAcesso: string, protocolo: string, dataEmissao: number) => Promise<void>;
 }
 
 type ModoCalendario = 'SEMANAL' | 'QUINZENAL' | 'MENSAL';
@@ -54,8 +57,10 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
   onOpenContratoPdf,
   onOpenWhatsApp,
   listVisibility,
+  onUpdateNfse,
 }) => {
   const [selectedOrcamentoReserva, setSelectedOrcamentoReserva] = useState<ReservaComItens | null>(null);
+  const [selectedNfseReserva, setSelectedNfseReserva] = useState<ReservaComItens | null>(null);
 
   const [isListVisible, setIsListVisible] = useState(() => {
     return listVisibility ? listVisibility.exibirReservasPorPadrao !== false : true;
@@ -754,7 +759,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                               className="flex items-center gap-1.5 bg-[#D4AF37]/10 hover:bg-[#D4AF37]/25 text-[#D4AF37] border border-[#D4AF37]/40 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer shadow-sm hover:border-[#D4AF37]"
                               title="Visualizar Orçamento Enviado ao Cliente"
                             >
-                              <Sparkles size={14} className="text-[#D4AF37]" />
+                              <Sparkles size={16} className="text-[#D4AF37]" />
                               <span>Ver Orçamento</span>
                             </button>
 
@@ -762,15 +767,41 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                               onClick={() => onOpenContratoPdf(r)}
                               className="flex items-center gap-1.5 bg-[#18181B] hover:bg-[#27272A] text-[#E4E4E7] border border-[#27272A] px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer"
                             >
-                              <FileText size={14} className="text-[#D4AF37]" />
+                              <FileText size={16} className="text-[#D4AF37]" />
                               <span>Gerar Contrato PDF</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                if (reserva.nfseEmitida || empresaConfig?.nfseGovBrConfig?.enabled) {
+                                  setSelectedNfseReserva(r);
+                                }
+                              }}
+                              disabled={!reserva.nfseEmitida && !empresaConfig?.nfseGovBrConfig?.enabled}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                                reserva.nfseEmitida 
+                                  ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 cursor-pointer' 
+                                  : empresaConfig?.nfseGovBrConfig?.enabled
+                                    ? 'bg-[#18181B] hover:bg-[#27272A] text-[#E4E4E7] border border-[#27272A] cursor-pointer'
+                                    : 'bg-[#18181B]/50 text-[#71717A] border border-[#27272A]/40 cursor-not-allowed opacity-40'
+                              }`}
+                              title={
+                                reserva.nfseEmitida 
+                                  ? "Faturamento e Emissão de NFS-e Nacional" 
+                                  : empresaConfig?.nfseGovBrConfig?.enabled
+                                    ? "Emitir Nota Fiscal Eletrônica (NFS-e)"
+                                    : "Módulo NFS-e Inativo nas configurações da empresa"
+                              }
+                            >
+                              <Receipt size={16} className={reserva.nfseEmitida ? "text-emerald-400" : empresaConfig?.nfseGovBrConfig?.enabled ? "text-[#D4AF37]" : "text-[#71717A]"} />
+                              <span>{reserva.nfseEmitida ? 'DANFSE NFS-e' : 'Emitir NFS-e'}</span>
                             </button>
 
                             <button
                               onClick={() => onOpenWhatsApp(r)}
                               className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-xl text-xs font-semibold shadow-md transition-all cursor-pointer"
                             >
-                              <MessageSquare size={14} />
+                              <MessageSquare size={16} />
                               <span>WhatsApp</span>
                             </button>
                           </div>
@@ -881,7 +912,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                                     className="p-1.5 bg-[#D4AF37]/10 hover:bg-[#D4AF37]/25 text-[#D4AF37] border border-[#D4AF37]/40 rounded-lg transition-colors cursor-pointer"
                                     title="Visualizar Orçamento Enviado ao Cliente"
                                   >
-                                    <Sparkles size={13} className="text-[#D4AF37]" />
+                                    <Sparkles size={16} className="text-[#D4AF37]" />
                                   </button>
 
                                   <button
@@ -889,7 +920,32 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                                     className="p-1.5 bg-[#18181B] hover:bg-[#27272A] text-[#A1A1AA] hover:text-white border border-[#27272A] rounded-lg transition-colors cursor-pointer"
                                     title="Gerar Contrato PDF"
                                   >
-                                    <FileText size={13} className="text-[#D4AF37]" />
+                                    <FileText size={16} className="text-[#D4AF37]" />
+                                  </button>
+
+                                  <button
+                                    onClick={() => {
+                                      if (reserva.nfseEmitida || empresaConfig?.nfseGovBrConfig?.enabled) {
+                                        setSelectedNfseReserva(r);
+                                      }
+                                    }}
+                                    disabled={!reserva.nfseEmitida && !empresaConfig?.nfseGovBrConfig?.enabled}
+                                    className={`p-1.5 border rounded-lg transition-colors ${
+                                      reserva.nfseEmitida 
+                                        ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/30 cursor-pointer' 
+                                        : empresaConfig?.nfseGovBrConfig?.enabled
+                                          ? 'bg-[#18181B] hover:bg-[#27272A] text-[#A1A1AA] hover:text-white border-[#27272A] cursor-pointer'
+                                          : 'bg-[#18181B]/50 text-[#71717A] border border-[#27272A]/40 cursor-not-allowed opacity-40'
+                                    }`}
+                                    title={
+                                      reserva.nfseEmitida 
+                                        ? "Ver NFS-e Nacional Emitida" 
+                                        : empresaConfig?.nfseGovBrConfig?.enabled
+                                          ? "Emitir Nota Fiscal Eletrônica (NFS-e)"
+                                          : "Módulo NFS-e Inativo nas configurações da empresa"
+                                    }
+                                  >
+                                    <Receipt size={16} className={reserva.nfseEmitida ? "text-emerald-400" : empresaConfig?.nfseGovBrConfig?.enabled ? "text-[#D4AF37]" : "text-[#71717A]"} />
                                   </button>
 
                                   <button
@@ -897,7 +953,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                                     className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg transition-colors cursor-pointer"
                                     title="WhatsApp"
                                   >
-                                    <MessageSquare size={13} />
+                                    <MessageSquare size={16} />
                                   </button>
                                 </div>
                               </td>
@@ -929,6 +985,35 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
         webForms={webForms}
         empresaConfig={empresaConfig}
         onClose={() => setSelectedOrcamentoReserva(null)}
+      />
+    )}
+
+    {selectedNfseReserva && (
+      <NfseFaturamentoModal
+        isOpen={!!selectedNfseReserva}
+        onClose={() => setSelectedNfseReserva(null)}
+        reservaComItens={selectedNfseReserva}
+        empresaConfig={empresaConfig}
+        onConfirmFaturamento={async (id, chave, prot, data) => {
+          if (onUpdateNfse) {
+            await onUpdateNfse(id, chave, prot, data);
+            setSelectedNfseReserva(prev => {
+              if (prev && prev.reserva.id === id) {
+                return {
+                  ...prev,
+                  reserva: {
+                    ...prev.reserva,
+                    nfseEmitida: true,
+                    nfseChaveAcesso: chave,
+                    nfseProtocolo: prot,
+                    nfseDataEmissao: data
+                  }
+                };
+              }
+              return prev;
+            });
+          }
+        }}
       />
     )}
   </div>

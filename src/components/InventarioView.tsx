@@ -41,6 +41,8 @@ interface InventarioViewProps {
   selectedClienteForWebForm?: Cliente | null;
   onClearClienteForWebForm?: () => void;
   listVisibility?: ListVisibilityConfig;
+  startInSelectionMode?: boolean;
+  onClearSelectionMode?: () => void;
 }
 
 export const InventarioView: React.FC<InventarioViewProps> = ({
@@ -55,6 +57,8 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
   selectedClienteForWebForm,
   onClearClienteForWebForm,
   listVisibility,
+  startInSelectionMode,
+  onClearSelectionMode,
 }) => {
   const [isListVisible, setIsListVisible] = useState(() => {
     return listVisibility ? listVisibility.exibirInventarioPorPadrao !== false : true;
@@ -70,13 +74,16 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('Todas');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedForWebForm, setSelectedForWebForm] = useState<number[]>([]);
-  const [isSelectionMode, setIsSelectionMode] = useState(() => !!selectedClienteForWebForm);
+  const [isSelectionMode, setIsSelectionMode] = useState(() => !!selectedClienteForWebForm || !!startInSelectionMode);
 
   React.useEffect(() => {
-    if (selectedClienteForWebForm) {
+    if (selectedClienteForWebForm || startInSelectionMode) {
       setIsSelectionMode(true);
+      if (startInSelectionMode && onClearSelectionMode) {
+        onClearSelectionMode(); // Reset it right away so it doesn't force selection mode if user toggles off later
+      }
     }
-  }, [selectedClienteForWebForm]);
+  }, [selectedClienteForWebForm, startInSelectionMode, onClearSelectionMode]);
 
   // Add/Edit Modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -179,15 +186,14 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
 
   const handleOpenAdd = () => {
     setEditingItem(null);
-    const initialUrl = 'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?auto=format&fit=crop&w=600&q=80';
     const defaultCat = categorias.find((c) => c.ativo)?.nome || 'Painéis & Decoração';
     setFormData({
       nome: '',
       descricao: '',
-      quantidadeTotal: 3,
-      precoAluguel: 150,
+      quantidadeTotal: 1,
+      precoAluguel: 0,
       categoria: defaultCat,
-      imageUrl: initialUrl,
+      imageUrl: '',
     });
     setIsKit(false);
     setKitComponentes([]);
@@ -264,9 +270,13 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
       calculatedQty = Math.min(...capacities);
     }
 
+    const defaultPlaceholderImage = 'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?auto=format&fit=crop&w=600&q=80';
+
     const submissionData = {
       ...formData,
-      quantidadeTotal: isKit ? calculatedQty : formData.quantidadeTotal,
+      imageUrl: formData.imageUrl.trim() || defaultPlaceholderImage,
+      quantidadeTotal: isKit ? calculatedQty : (formData.quantidadeTotal || 1),
+      precoAluguel: formData.precoAluguel || 0,
       isKit,
       kitComponentes: isKit ? kitComponentes : undefined,
     };
@@ -498,6 +508,9 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                 setSelectedCategory('Todas');
                 setCurrentPage(1);
               }}
+              actionText="Adicionar Item"
+              actionIcon={<Plus size={16} />}
+              onAction={handleOpenAdd}
             />
           ) : (
             <>
@@ -942,10 +955,11 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                     <label className="block text-xs font-medium text-[#A1A1AA] mb-1">Preço Aluguel (R$/dia)</label>
                     <input
                       type="number"
-                      min="1"
+                      min="0"
                       step="0.5"
                       required
-                      value={formData.precoAluguel}
+                      placeholder="0,00"
+                      value={formData.precoAluguel === 0 ? '' : formData.precoAluguel}
                       onChange={(e) => setFormData({ ...formData, precoAluguel: parseFloat(e.target.value) || 0 })}
                       onFocus={handleFocusScroll}
                       className="w-full px-3 py-2 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none"
@@ -975,7 +989,10 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => setIsQuickCategoriaModalOpen(true)}
+                      onClick={() => {
+                        setNewCatData({ nome: '', descricao: '', cor: '#D4AF37' });
+                        setIsQuickCategoriaModalOpen(true);
+                      }}
                       title="Adicionar ou gerenciar categorias"
                       className="px-3 py-2 bg-[#27272A] hover:bg-[#3F3F46] border border-[#3F3F46] hover:border-[#D4AF37] text-[#D4AF37] hover:text-white rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer shrink-0 text-xs font-semibold"
                     >

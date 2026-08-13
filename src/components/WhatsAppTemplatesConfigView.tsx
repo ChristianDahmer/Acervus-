@@ -18,11 +18,6 @@ export const WhatsAppTemplatesConfigView: React.FC<WhatsAppTemplatesConfigViewPr
 }) => {
   const [selectedStage, setSelectedStage] = useState<StatusCicloVenda>(StatusCicloVenda.RESERVA_CONFIRMADA);
   
-  // API Credentials State
-  const [apiToken, setApiToken] = useState(empresaConfig.whatsappApiToken || '');
-  const [phoneNumberId, setPhoneNumberId] = useState(empresaConfig.whatsappPhoneNumberId || '');
-  const [apiEndpoint, setApiEndpoint] = useState(empresaConfig.whatsappApiEndpoint || '');
-
   // Local state for all templates (initialized with current config or default)
   const [templatesState, setTemplatesState] = useState<WhatsAppTemplatesConfig>(() => {
     return {
@@ -110,9 +105,6 @@ export const WhatsAppTemplatesConfigView: React.FC<WhatsAppTemplatesConfigViewPr
     const updatedConfig: EmpresaConfig = {
       ...empresaConfig,
       whatsappTemplates: templatesState,
-      whatsappApiToken: apiToken.trim(),
-      whatsappPhoneNumberId: phoneNumberId.trim(),
-      whatsappApiEndpoint: apiEndpoint.trim(),
     };
     onSaveConfig(updatedConfig);
     setIsSavedNotice(true);
@@ -151,11 +143,8 @@ export const WhatsAppTemplatesConfigView: React.FC<WhatsAppTemplatesConfigViewPr
       {/* Header Info */}
       <div className="bg-[#111113] border border-[#27272A] rounded-2xl p-6 shadow-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <div className="flex items-center space-x-2 text-emerald-400 text-xs font-bold uppercase tracking-wider mb-1">
-            <MessageSquare size={16} /> Personalização de Disparos WhatsApp
-          </div>
           <h3 className="text-xl font-serif italic text-white flex items-center gap-2">
-            Modelos de Mensagens Dinâmicas
+            <MessageSquare size={20} className="text-[#D4AF37]" /> Modelos de Mensagens
           </h3>
           <p className="text-[#A1A1AA] text-xs mt-1 max-w-2xl">
             Configure mensagens personalizadas para cada etapa da locação. Os dados da sua empresa (<strong>{empresaConfig.nomeFantasia}</strong>), do cliente e do contrato de reserva serão preenchidos dinamicamente no momento do envio!
@@ -167,82 +156,6 @@ export const WhatsAppTemplatesConfigView: React.FC<WhatsAppTemplatesConfigViewPr
             <CheckCircle size={16} /> Modelos Salvos no Cadastro!
           </span>
         )}
-      </div>
-
-      {/* WhatsApp Official Cloud API / Automatic Dispatch Config Box */}
-      <div className="bg-[#111113] border border-[#27272A] p-5 rounded-2xl shadow-xl space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#27272A] pb-3">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/30">
-              <Send size={18} />
-            </div>
-            <div>
-              <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                API Oficial / Gateway WhatsApp (Envio 100% Automático)
-                <span className="bg-emerald-500/10 text-emerald-400 text-[10px] px-2 py-0.5 rounded-full border border-emerald-500/30 font-mono">
-                  SEM INTERAÇÃO DO USUÁRIO
-                </span>
-              </h4>
-              <p className="text-xs text-[#A1A1AA]">
-                Preencha as credenciais da Meta WhatsApp Cloud API (ou Z-API/Evolution) para disparar propostas em segundo plano sem necessidade de clique manual.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="space-y-1">
-            <label className="text-[11px] font-bold text-[#A1A1AA] uppercase tracking-wider flex items-center gap-1">
-              <Key size={12} className="text-[#D4AF37]" /> Token de Acesso API (Bearer)
-            </label>
-            <input
-              type="password"
-              value={apiToken}
-              onChange={(e) => setApiToken(e.target.value)}
-              placeholder="EAAG..."
-              className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-xs font-mono focus:border-emerald-500 focus:outline-none"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[11px] font-bold text-[#A1A1AA] uppercase tracking-wider flex items-center gap-1">
-              <Building2 size={12} className="text-emerald-400" /> ID do Telefone (Phone Number ID)
-            </label>
-            <input
-              type="text"
-              value={phoneNumberId}
-              onChange={(e) => setPhoneNumberId(e.target.value)}
-              placeholder="1092837482910..."
-              className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-xs font-mono focus:border-emerald-500 focus:outline-none"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[11px] font-bold text-[#A1A1AA] uppercase tracking-wider flex items-center gap-1">
-              <Globe size={12} className="text-[#D4AF37]" /> Endpoint Personalizado / Webhook (Opcional)
-            </label>
-            <input
-              type="text"
-              value={apiEndpoint}
-              onChange={(e) => setApiEndpoint(e.target.value)}
-              placeholder="https://graph.facebook.com/v18.0/me/messages"
-              className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-xs font-mono focus:border-emerald-500 focus:outline-none"
-            />
-          </div>
-        </div>
-
-        <div className="text-[11px] text-[#A1A1AA] bg-[#18181B] p-3 rounded-xl border border-[#27272A] flex items-center justify-between">
-          <span>
-            💡 <strong>Nota Técnica:</strong> Se nenhum Token for informado, o sistema utilizará o modo de fallback seguro de 1-Clique abrindo a janela do WhatsApp com a mensagem pré-formatada.
-          </span>
-          <button
-            type="button"
-            onClick={handleSaveAllTemplates}
-            className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition-all cursor-pointer shrink-0 ml-2"
-          >
-            Salvar API
-          </button>
-        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

@@ -1,14 +1,4 @@
 import { 
-  collection, 
-  doc, 
-  getDocs, 
-  setDoc, 
-  deleteDoc, 
-  writeBatch,
-  getDoc
-} from 'firebase/firestore';
-import { db } from './firebase';
-import { 
   INITIAL_CLIENTES, 
   INITIAL_ITENS, 
   INITIAL_RESERVAS, 
@@ -53,7 +43,22 @@ export function getActiveTenantId(): string {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.cnpjEmpresa) {
-          return parsed.cnpjEmpresa.replace(/\D/g, '') || 'default';
+          const tenantId = parsed.cnpjEmpresa.replace(/\D/g, '');
+          if (tenantId) {
+            localStorage.setItem('locadora_last_active_tenant', tenantId);
+            return tenantId;
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 2.5 Fallback to the last active authenticated tenant to prevent reverting to default/test mode on logoff
+    try {
+      const lastActive = localStorage.getItem('locadora_last_active_tenant');
+      if (lastActive) {
+        const sanitized = lastActive.replace(/\D/g, '');
+        if (sanitized) {
+          return sanitized;
         }
       }
     } catch (e) {}
@@ -69,7 +74,6 @@ export function getActiveTenantId(): string {
 
 // Maps generic collection name to tenant-specific name
 export function getTenantCollectionName(colName: string): string {
-  // 'dispositivos_autorizados' is global so terminals across all companies can authenticate
   if (colName === 'dispositivos_autorizados' || colName === 'system_configs' || colName === 'seeded') {
     return colName;
   }
@@ -79,7 +83,6 @@ export function getTenantCollectionName(colName: string): string {
 
 // Helper for simulated latency and errors (Developer Test Panel)
 async function delayAndErrorCheck(): Promise<boolean> {
-  // Ignorar latências ou erros simulados para a visualização pública da proposta do cliente
   if (typeof window !== 'undefined' && window.location.search.includes('proposta=')) {
     return false;
   }
@@ -94,7 +97,7 @@ async function delayAndErrorCheck(): Promise<boolean> {
 
   const throwError = localStorage.getItem('dev_simulated_error');
   if (throwError === 'true') {
-    console.warn('[Developer Simulated Error] Falha de escrita/leitura induzida para teste de resiliência offline.');
+    console.info('[Developer Simulated Error] Falha de escrita/leitura induzida para teste de resiliência offline.');
     return true; // simulated error active
   }
   return false;
@@ -107,12 +110,32 @@ export function getLocalCollection<T>(colName: string): T[] {
     const data = localStorage.getItem(`offline_db_${tenantId}_${colName}`);
     if (data) return JSON.parse(data);
   } catch (e) {
-    console.warn(`[Local Storage Cache] Error reading local ${colName}:`, e);
+    console.info(`[Local Storage Cache] Error reading local ${colName}:`, e);
   }
   
-  // Return initial defaults if local storage is completely empty and they haven't explicitly wiped
-  const isWiped = localStorage.getItem(`locadora_wiped_state_${tenantId}`) === 'true';
-  if (!isWiped) {
+  // Return initial defaults ONLY if system is explicitly configured in 'teste' mode and not wiped
+  let isModoTeste = false;
+  try {
+    const rawConf = localStorage.getItem(`offline_config_empresaConfig_${tenantId}`) ||
+                    localStorage.getItem(`offline_config_${tenantId}_empresaConfig`) ||
+                    localStorage.getItem('offline_config_empresaConfig') ||
+                    localStorage.getItem(`offline_config_empresa_config_${tenantId}`);
+    if (rawConf) {
+      const parsed = JSON.parse(rawConf);
+      if (parsed && parsed.ambienteSistema === 'teste') {
+        isModoTeste = true;
+      } else if (parsed && parsed.ambienteSistema === 'producao') {
+        isModoTeste = false;
+      }
+    } else {
+      // Default fallback is test mode only if not explicitly configured
+      isModoTeste = true;
+    }
+  } catch (e) {}
+
+  const isWiped = localStorage.getItem('locadora_wiped_state') === 'true' || localStorage.getItem(`locadora_wiped_state_${tenantId}`) === 'true';
+  
+  if (isModoTeste && !isWiped) {
     if (colName === 'clientes') return INITIAL_CLIENTES as unknown as T[];
     if (colName === 'itens') return INITIAL_ITENS as unknown as T[];
     if (colName === 'reservas') return INITIAL_RESERVAS as unknown as T[];
@@ -129,76 +152,87 @@ export function saveLocalCollection<T>(colName: string, items: T[]): void {
   const tenantId = getActiveTenantId();
   try {
     localStorage.setItem(`offline_db_${tenantId}_${colName}`, JSON.stringify(items));
-    if (items.length > 0) {
-      localStorage.removeItem(`locadora_wiped_state_${tenantId}`);
-    }
   } catch (e) {
-    console.warn(`[Local Storage Cache] Error saving local ${colName}:`, e);
+    console.info(`[Local Storage Cache] Error saving local ${colName}:`, e);
   }
 }
 
-// Load generic collection
+// Load generic collection from PostgreSQL via backend proxy
 export async function fetchCollection<T>(colName: string): Promise<T[]> {
   const hasSimulatedError = await delayAndErrorCheck();
   if (hasSimulatedError) {
-    console.warn(`[Resiliência Offline] Retornando cache local para coleção ${colName} devido à falha simulada.`);
+    console.info(`[Resiliência Offline] Retornando cache local para coleção ${colName} devido à falha simulada.`);
     return getLocalCollection<T>(colName);
   }
 
-  // Ensure new tenants have their databases initialized/seeded
   const tenantId = getActiveTenantId();
   if (tenantId !== 'default') {
     await seedTenantDatabaseIfEmpty(tenantId);
   }
 
   try {
-    const realColName = getTenantCollectionName(colName);
-    const colRef = collection(db, realColName);
-    const snapshot = await getDocs(colRef);
-    const items: T[] = [];
-    snapshot.forEach((d) => {
-      items.push({ ...d.data() } as T);
+    const res = await fetch('/api/db/fetch-collection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ colName, tenantId })
     });
     
-    // If successfully fetched from Firestore, update our local cache
-    if (items.length > 0) {
-      saveLocalCollection(colName, items);
-    } else {
-      // If Firestore is empty (e.g. newly provisioned or cleared in console),
-      // fallback to whatever we have locally to preserve user offline data
-      const local = getLocalCollection<T>(colName);
-      if (local.length > 0) {
-        console.log(`[Resiliência Offline] Coleção remota ${colName} vazia. Carregando ${local.length} itens do cache local.`);
-        return local;
-      }
+    if (!res.ok) {
+      throw new Error(`HTTP error! status: ${res.status}`);
     }
-    return items;
+    
+    const items = await res.json() as T[];
+    
+    if (items && Array.isArray(items)) {
+      // NOVO/ALTERADO: Mescla dados remotos com cache local para evitar perda de propostas ou agendamentos recém-gerados
+      const localItems = getLocalCollection<T>(colName);
+      const mergedItems = [...items];
+      
+      for (const localItem of localItems) {
+        const localId = (localItem as any)?.id || ((localItem as any)?.reserva?.id);
+        if (localId !== undefined) {
+          const existsInRemote = items.some((remoteItem: any) => {
+            const remoteId = remoteItem?.id || remoteItem?.reserva?.id;
+            return remoteId !== undefined && String(remoteId) === String(localId);
+          });
+          if (!existsInRemote) {
+            mergedItems.push(localItem);
+          }
+        }
+      }
+      
+      saveLocalCollection(colName, mergedItems);
+      return mergedItems;
+    }
+    
+    return getLocalCollection<T>(colName);
   } catch (err) {
-    console.warn(`[Resiliência Offline] Erro ao buscar coleção ${colName} do Firestore. Ativando fallback local:`, err);
+    console.info(`[Resiliência Offline] Erro ao buscar coleção ${colName} do PostgreSQL. Ativando fallback local:`, err);
     return getLocalCollection<T>(colName);
   }
 }
 
-// Fetch a single document by ID directly from Firestore (extremely fast and lightweight)
+// Fetch a single document by ID from local cache or remote collection
 export async function fetchDocument<T>(colName: string, docId: string | number): Promise<T | null> {
   const hasSimulatedError = await delayAndErrorCheck();
   if (hasSimulatedError) {
     return null;
   }
   try {
-    const realColName = getTenantCollectionName(colName);
-    const docRef = doc(db, realColName, String(docId));
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
-      return docSnap.data() as T;
-    }
+    const items = await fetchCollection<any>(colName);
+    const found = items.find(item => {
+      if (item.id !== undefined) return String(item.id) === String(docId);
+      if (colName === 'reservas' && item.reserva?.id) return String(item.reserva.id) === String(docId);
+      return false;
+    });
+    return found || null;
   } catch (err) {
-    console.warn(`[Resiliência Offline] Erro ao buscar documento ${colName} #${docId} do Firestore:`, err);
+    console.info(`[Resiliência Offline] Erro ao buscar documento ${colName} #${docId} do PostgreSQL:`, err);
   }
   return null;
 }
 
-// Save document
+// Save document to PostgreSQL with local cache backup
 export async function saveDocument(colName: string, docId: string | number, data: any): Promise<void> {
   // Update local storage cache first to ensure immediate offline availability
   try {
@@ -225,26 +259,33 @@ export async function saveDocument(colName: string, docId: string | number, data
       items.push(cleanData);
     }
     saveLocalCollection(colName, items);
+
+    // Auto-clear wiped state when new active data is written to the system
+    const tId = getActiveTenantId();
+    localStorage.removeItem('locadora_wiped_state');
+    localStorage.removeItem(`locadora_wiped_state_${tId}`);
   } catch (e) {
-    console.warn(`[Local Storage Cache] Error caching document for ${colName}:`, e);
+    console.info(`[Local Storage Cache] Error caching document for ${colName}:`, e);
   }
 
   const hasSimulatedError = await delayAndErrorCheck();
   if (hasSimulatedError) {
-    console.warn(`[Resiliência Offline] Salvamento em ${colName} #${docId} simulado com sucesso (modo offline/resiliente).`);
+    console.info(`[Resiliência Offline] Salvamento em ${colName} #${docId} simulado com sucesso (modo offline/resiliente).`);
     return;
   }
   try {
-    const realColName = getTenantCollectionName(colName);
-    const docRef = doc(db, realColName, String(docId));
-    const cleanData = JSON.parse(JSON.stringify(data));
-    await setDoc(docRef, cleanData, { merge: true });
+    const tenantId = getActiveTenantId();
+    await fetch('/api/db/save-document', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ colName, docId, data, tenantId })
+    });
   } catch (err) {
-    console.warn(`[Resiliência Offline] Falha ao salvar documento em ${colName}, operando localmente:`, err);
+    console.info(`[Resiliência Offline] Falha ao salvar documento em ${colName} no PostgreSQL, operando localmente:`, err);
   }
 }
 
-// Delete document
+// Delete document from PostgreSQL and local cache
 export async function deleteDocument(colName: string, docId: string | number): Promise<void> {
   // Update local storage cache first
   try {
@@ -260,20 +301,23 @@ export async function deleteDocument(colName: string, docId: string | number): P
     });
     saveLocalCollection(colName, filtered);
   } catch (e) {
-    console.warn(`[Local Storage Cache] Error removing from cache for ${colName}:`, e);
+    console.info(`[Local Storage Cache] Error removing from cache for ${colName}:`, e);
   }
 
   const hasSimulatedError = await delayAndErrorCheck();
   if (hasSimulatedError) {
-    console.warn(`[Resiliência Offline] Exclusão em ${colName} #${docId} simulada com sucesso.`);
+    console.info(`[Resiliência Offline] Exclusão em ${colName} #${docId} simulada com sucesso.`);
     return;
   }
   try {
-    const realColName = getTenantCollectionName(colName);
-    const docRef = doc(db, realColName, String(docId));
-    await deleteDoc(docRef);
+    const tenantId = getActiveTenantId();
+    await fetch('/api/db/delete-document', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ colName, docId, tenantId })
+    });
   } catch (err) {
-    console.warn(`[Resiliência Offline] Falha ao excluir documento em ${colName}:`, err);
+    console.info(`[Resiliência Offline] Falha ao excluir documento em ${colName} no PostgreSQL:`, err);
   }
 }
 
@@ -287,21 +331,28 @@ export async function saveConfig(configName: string, data: any): Promise<void> {
 
   try {
     localStorage.setItem(`offline_config_${realConfigName}`, JSON.stringify(data));
+    if (configName === 'empresaConfig') {
+      localStorage.setItem(`offline_config_empresa_config_${tenantId}`, JSON.stringify(data));
+    } else if (configName === 'empresa_config') {
+      localStorage.setItem(`offline_config_empresaConfig_${tenantId}`, JSON.stringify(data));
+    }
   } catch (e) {
-    console.warn(`[Local Storage Cache] Error caching config ${realConfigName}:`, e);
+    console.info(`[Local Storage Cache] Error caching config ${realConfigName}:`, e);
   }
 
   const hasSimulatedError = await delayAndErrorCheck();
   if (hasSimulatedError) {
-    console.warn(`[Resiliência Offline] Salvamento de config ${realConfigName} simulado com sucesso.`);
+    console.info(`[Resiliência Offline] Salvamento de config ${realConfigName} simulado com sucesso.`);
     return;
   }
   try {
-    const docRef = doc(db, 'system_configs', realConfigName);
-    const cleanData = JSON.parse(JSON.stringify(data));
-    await setDoc(docRef, cleanData);
+    await fetch('/api/db/save-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ configName, tenantId, data })
+    });
   } catch (err) {
-    console.warn(`[Resiliência Offline] Falha ao salvar config ${realConfigName}:`, err);
+    console.info(`[Resiliência Offline] Falha ao salvar config ${realConfigName} no PostgreSQL:`, err);
   }
 }
 
@@ -312,28 +363,48 @@ export async function getConfig<T>(configName: string, defaultValue: T): Promise
 
   const hasSimulatedError = await delayAndErrorCheck();
   if (hasSimulatedError) {
-    console.warn(`[Resiliência Offline] Leitura de config ${realConfigName} simulada (usando valor padrão/local).`);
+    console.info(`[Resiliência Offline] Leitura de config ${realConfigName} simulada (usando valor padrão/local).`);
     try {
-      const saved = localStorage.getItem(`offline_config_${realConfigName}`);
+      let saved = localStorage.getItem(`offline_config_${realConfigName}`);
+      if (!saved && (configName === 'empresaConfig' || configName === 'empresa_config')) {
+        saved = localStorage.getItem(`offline_config_empresaConfig_${tenantId}`) || 
+                localStorage.getItem(`offline_config_empresa_config_${tenantId}`);
+      }
       return saved ? JSON.parse(saved) : defaultValue;
     } catch {
       return defaultValue;
     }
   }
   try {
-    const docRef = doc(db, 'system_configs', realConfigName);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      const data = snap.data() as T;
+    const res = await fetch('/api/db/get-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ configName, tenantId, defaultValue })
+    });
+    if (res.ok) {
+      const data = await res.json() as T;
       localStorage.setItem(`offline_config_${realConfigName}`, JSON.stringify(data));
+      if (configName === 'empresaConfig') {
+        localStorage.setItem(`offline_config_empresa_config_${tenantId}`, JSON.stringify(data));
+      } else if (configName === 'empresa_config') {
+        localStorage.setItem(`offline_config_empresaConfig_${tenantId}`, JSON.stringify(data));
+      }
       return data;
     }
-    const saved = localStorage.getItem(`offline_config_${realConfigName}`);
+    let saved = localStorage.getItem(`offline_config_${realConfigName}`);
+    if (!saved && (configName === 'empresaConfig' || configName === 'empresa_config')) {
+      saved = localStorage.getItem(`offline_config_empresaConfig_${tenantId}`) || 
+              localStorage.getItem(`offline_config_empresa_config_${tenantId}`);
+    }
     return saved ? JSON.parse(saved) : defaultValue;
   } catch (err) {
-    console.warn(`[Resiliência Offline] Falha ao ler config ${realConfigName}. Usando cache local fallback:`, err);
+    console.info(`[Resiliência Offline] Falha ao ler config ${realConfigName} do PostgreSQL. Usando cache local fallback:`, err);
     try {
-      const saved = localStorage.getItem(`offline_config_${realConfigName}`);
+      let saved = localStorage.getItem(`offline_config_${realConfigName}`);
+      if (!saved && (configName === 'empresaConfig' || configName === 'empresa_config')) {
+        saved = localStorage.getItem(`offline_config_empresaConfig_${tenantId}`) || 
+                localStorage.getItem(`offline_config_empresa_config_${tenantId}`);
+      }
       return saved ? JSON.parse(saved) : defaultValue;
     } catch {
       return defaultValue;
@@ -341,24 +412,24 @@ export async function getConfig<T>(configName: string, defaultValue: T): Promise
   }
 }
 
-// Multi-Tenant Seeding Logic for newly registered companies
+// Multi-Tenant Seeding Logic for newly registered companies (PostgreSQL focused)
 export async function seedTenantDatabaseIfEmpty(tenantId: string): Promise<void> {
   if (!tenantId || tenantId === 'default') return;
   
   try {
-    const seedCheckDocRef = doc(db, 'system_configs', `seeded_${tenantId}`);
-    const checkSnap = await getDoc(seedCheckDocRef);
-    if (checkSnap.exists()) {
-      const data = checkSnap.data();
-      if (data?.done === true) return; // Already seeded
+    const currentConf = await getConfig<EmpresaConfig>('empresaConfig', INITIAL_EMPRESA_CONFIG);
+    if (currentConf?.ambienteSistema !== 'teste') {
+      return; // Do NOT auto-seed sample test data in Production Mode
     }
 
-    console.log(`[Multi-Tenant Seeder] Seeding initial data for Company CNPJ #${tenantId}...`);
+    if (typeof window !== 'undefined' && (localStorage.getItem('locadora_wiped_state') === 'true' || localStorage.getItem(`locadora_wiped_state_${tenantId}`) === 'true')) {
+      return;
+    }
 
-    const configRef = doc(db, 'system_configs', `empresaConfig_${tenantId}`);
-    const themeRef = doc(db, 'system_configs', `themeConfig_${tenantId}`);
+    const seedCheck = await getConfig<any>(`seeded_${tenantId}`, null);
+    if (seedCheck?.done === true || seedCheck?.wiped === true) return; // Already seeded or wiped
 
-    const batch = writeBatch(db);
+    console.log(`[Multi-Tenant Seeder] Seeding initial data for Company CNPJ #${tenantId} into PostgreSQL...`);
 
     // Customize the initial empresa config with their details if possible!
     const savedDevice = localStorage.getItem('locadora_authenticated_device');
@@ -377,9 +448,8 @@ export async function seedTenantDatabaseIfEmpty(tenantId: string): Promise<void>
       } catch (e) {}
     }
 
-    batch.set(configRef, customizedConfig);
-    batch.set(themeRef, INITIAL_THEME_CONFIG);
-    batch.set(seedCheckDocRef, { done: true, timestamp: Date.now() });
+    await saveConfig('empresaConfig', customizedConfig);
+    await saveConfig('themeConfig', INITIAL_THEME_CONFIG);
 
     // Seed collections for this tenant
     const itemsToSeed = [
@@ -393,68 +463,57 @@ export async function seedTenantDatabaseIfEmpty(tenantId: string): Promise<void>
     ];
 
     for (const entry of itemsToSeed) {
-      const colName = `empresa_${tenantId}_${entry.col}`;
-      
-      // Let's check if the collection already contains data first
-      // To keep batch operations highly lightweight and secure
-      for (const docItem of entry.data) {
-        const docId = String((docItem as any).id || (docItem as any).reserva?.id || Math.random().toString(36).substring(7));
-        const docRef = doc(db, colName, docId);
-        batch.set(docRef, docItem);
+      if (entry.col === 'modelosContratos' || entry.col === 'categorias') {
+        await saveDocument(entry.col, entry.col, entry.data);
+      } else {
+        for (const docItem of entry.data) {
+          const docId = String((docItem as any).id || (docItem as any).reserva?.id || Math.random().toString(36).substring(7));
+          await saveDocument(entry.col, docId, docItem);
+        }
       }
     }
 
-    await batch.commit();
+    await saveConfig(`seeded_${tenantId}`, { done: true, timestamp: Date.now() });
     console.log(`[Multi-Tenant Seeder] Seeding completed for Company CNPJ #${tenantId}.`);
   } catch (error) {
-    console.warn(`[Multi-Tenant Seeder] Seeding error or offline for ${tenantId}:`, error);
+    console.info(`[Multi-Tenant Seeder] Seeding error or offline for ${tenantId}:`, error);
   }
 }
 
 // Database Seeding Logic (Global Fallback)
 export async function seedDatabaseIfEmpty(): Promise<void> {
   try {
-    if (typeof window !== 'undefined' && localStorage.getItem('locadora_wiped_state') === 'true') {
+    const tenantId = getActiveTenantId();
+    if (typeof window !== 'undefined' && (localStorage.getItem('locadora_wiped_state') === 'true' || localStorage.getItem(`locadora_wiped_state_${tenantId}`) === 'true')) {
       console.log('Database explicitly wiped locally. Skipping automatic seed.');
       return;
     }
 
-    const checkRef = doc(db, 'system_configs', 'seeded');
-    const checkSnap = await getDoc(checkRef);
-    if (checkSnap.exists()) {
-      const data = checkSnap.data();
-      if (data?.done === true || data?.wiped === true) {
-        console.log('Database already seeded or explicitly wiped. Skipping automatic seed.');
-        return;
-      }
+    const check = await getConfig<any>('seeded', null);
+    if (check?.done === true || check?.wiped === true) {
+      console.log('Database already seeded or explicitly wiped. Skipping automatic seed.');
+      return;
     }
 
-    const configRef = doc(db, 'system_configs', 'empresaConfig_default');
-    const configSnap = await getDoc(configRef);
-    if (configSnap.exists()) {
+    const config = await getConfig<any>('empresaConfig', null);
+    if (config?.ambienteSistema === 'producao') {
+      console.log('System configured in PRODUCTION mode. Skipping automatic seed.');
+      return;
+    }
+
+    if (config) {
       console.log('Database already has company configurations. Skipping seed.');
       return;
     }
 
-    console.log('Seeding initial configurations into Firestore...');
+    console.log('Seeding initial configurations into PostgreSQL...');
 
-    const batch = writeBatch(db);
+    await saveConfig('empresaConfig', INITIAL_EMPRESA_CONFIG);
+    await saveConfig('themeConfig', INITIAL_THEME_CONFIG);
+    await saveConfig('seeded', { done: true });
 
-    batch.set(configRef, INITIAL_EMPRESA_CONFIG);
-
-    const themeRef = doc(db, 'system_configs', 'themeConfig_default');
-    batch.set(themeRef, INITIAL_THEME_CONFIG);
-
-    batch.set(checkRef, { done: true });
-
-    await batch.commit();
     console.log('Database configurations seeding successfully completed.');
   } catch (error: any) {
-    if (error?.code === 'unavailable' || error?.message?.includes('offline') || error?.message?.includes('Failed to get document')) {
-      console.warn('Firestore offline / indisponível durante a verificação do seed. Operando com dados locais.');
-    } else {
-      console.warn('Sincronização remota indisponível:', error?.message || error);
-    }
+    console.info('Sincronização PostgreSQL indisponível:', error?.message || error);
   }
 }
-

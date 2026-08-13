@@ -29,6 +29,7 @@ import {
 import { DispositivoAutorizado, EmpresaConfig } from '../types';
 import { saveDocument, saveConfig } from '../lib/firebaseSync';
 import { PhoneInput } from './PhoneInput';
+import { INITIAL_EMPRESA_CONFIG } from '../data/initialData';
 
 interface LockScreenProps {
   empresaConfig: EmpresaConfig;
@@ -105,13 +106,13 @@ export const LockScreen: React.FC<LockScreenProps> = ({
       setShowManualForm(true);
     }
 
-    // Auto-fill defaults conditionally
+    // Auto-fill defaults conditionally (leave empty for real user entry)
     if (formMode === 'REGISTER') {
-      setCnpj(empresaConfig.cnpj || '45.678.910/0001-23');
-      setUsuario(empresaConfig.nomeRepresentante || 'Representante Legal');
-      setEmail(empresaConfig.email || 'contato@locadora.com.br');
-      setTelefone(empresaConfig.telefoneWhatsapp || '5511999998888');
-      setSenha('123456');
+      setCnpj('');
+      setUsuario('');
+      setEmail('');
+      setTelefone('');
+      setSenha('');
     } else {
       setCnpj('');
       setUsuario('');
@@ -189,16 +190,21 @@ export const LockScreen: React.FC<LockScreenProps> = ({
     };
 
     const newEmpresaConfig: EmpresaConfig = {
-      ...empresaConfig,
-      cnpj: cnpj.trim() || empresaConfig.cnpj,
+      ...INITIAL_EMPRESA_CONFIG,
+      cnpj: cnpj.trim(),
       nomeRepresentante: usuario.trim() || 'Representante Legal',
       email: email.trim(),
       senhaAcesso: senha.trim() || '123456',
       emailConfirmationSeed: generatedSeed,
       isEmailVerified: false,
       telefoneWhatsapp: telefone.trim(),
-      nomeFantasia: empresaConfig.nomeFantasia || 'Nova Empresa Locadora',
-      razaoSocial: empresaConfig.razaoSocial || 'Razão Social do Novo Cliente',
+      nomeFantasia: '',
+      razaoSocial: '',
+      enderecoCompleto: '',
+      linkMapaLocalizacao: '',
+      pixChave: cnpj.trim(),
+      pixTipoChave: 'CNPJ',
+      logoUrl: '',
     };
 
     try {
@@ -276,20 +282,39 @@ export const LockScreen: React.FC<LockScreenProps> = ({
       const inputUser = usuario.trim().toLowerCase();
       const trimmedSenha = senha.trim();
 
-      // Find matching user in dispositivos list or fallback to empresaConfig
-      const userMatch = dispositivos.find(d => 
+      const activeCnpj = (empresaConfig.cnpj || '').replace(/\D/g, '');
+
+      // 1. Filtrar operadores e dispositivos APROVADOS vinculados a esta empresa (CNPJ)
+      const allowedUsersForTenant = dispositivos.filter(d => {
+        const devCnpj = (d.cnpjEmpresa || '').replace(/\D/g, '');
+        return devCnpj === activeCnpj && d.status === 'APROVADO';
+      });
+
+      // 2. Procurar operador cadastrado correspondente
+      const userMatch = allowedUsersForTenant.find(d => 
         (d.usuario && d.usuario.trim().toLowerCase() === inputUser) ||
         (d.email && d.email.trim().toLowerCase() === inputUser)
       );
 
-      // Determine expected password for this specific user or master company config
-      const expectedPassword = userMatch?.senha || empresaConfig.senhaAcesso || '123456';
+      // 3. Verificar se corresponde à conta Master/Administradora da empresa
+      const masterUser = (empresaConfig.nomeRepresentante || 'Administrador').trim().toLowerCase();
+      const masterEmail = (empresaConfig.email || '').trim().toLowerCase();
+      const masterSenha = empresaConfig.senhaAcesso || '123456';
+      const isMasterMatch = (inputUser === masterUser || inputUser === masterEmail || inputUser === 'admin');
 
-      // Strict password validation (Fixes bug where wrong password allowed entry)
-      const isPasswordValid = trimmedSenha === expectedPassword || (trimmedSenha === '123456' && !userMatch?.senha);
+      // 4. Bloquear se não for usuário válido nem Master
+      if (!userMatch && !isMasterMatch) {
+        setError('Acesso negado. Usuário não cadastrado ou não habilitado para esta empresa.');
+        setLoading(false);
+        return;
+      }
+
+      // 5. Validar a senha de forma estrita de acordo com o tipo de usuário
+      const expectedPassword = userMatch ? (userMatch.senha || '123456') : masterSenha;
+      const isPasswordValid = (trimmedSenha === expectedPassword);
 
       if (!isPasswordValid) {
-        setError('Senha incorreta. Verifique o nome de usuário e a senha de acesso.');
+        setError('Senha incorreta. Verifique as credenciais de acesso.');
         setLoading(false);
         return;
       }
@@ -303,11 +328,12 @@ export const LockScreen: React.FC<LockScreenProps> = ({
         const devToAuth = userMatch || matchedDevice || {
           id: deviceUuid,
           imei: deviceUuid,
-          nomeDispositivo: nomeDispositivo.trim() || 'Dispositivo Autorizado',
-          cnpjEmpresa: cnpj.trim() || empresaConfig.cnpj || '',
-          usuario: usuario.trim() || 'Representante Legal',
-          telefone: telefone.trim() || '',
+          nomeDispositivo: nomeDispositivo.trim() || 'Terminal Principal Administrador',
+          cnpjEmpresa: empresaConfig.cnpj || '',
+          usuario: empresaConfig.nomeRepresentante || 'Administrador',
+          telefone: telefone.trim() || empresaConfig.telefoneWhatsapp || '',
           status: 'APROVADO',
+          nivelAcesso: 'ADMINISTRADOR' as const,
           dataSolicitacao: Date.now(),
           dataAtualizacao: Date.now(),
           ultimoAcesso: Date.now(),
@@ -328,11 +354,12 @@ export const LockScreen: React.FC<LockScreenProps> = ({
       const devToAuth: DispositivoAutorizado = userMatch || matchedDevice || {
         id: deviceUuid,
         imei: deviceUuid,
-        nomeDispositivo: nomeDispositivo.trim() || 'Dispositivo Autorizado',
-        cnpjEmpresa: cnpj.trim() || empresaConfig.cnpj || '',
-        usuario: usuario.trim() || 'Representante Legal',
-        telefone: telefone.trim() || '',
+        nomeDispositivo: nomeDispositivo.trim() || 'Terminal Principal Administrador',
+        cnpjEmpresa: empresaConfig.cnpj || '',
+        usuario: empresaConfig.nomeRepresentante || 'Administrador',
+        telefone: telefone.trim() || empresaConfig.telefoneWhatsapp || '',
         status: 'APROVADO',
+        nivelAcesso: 'ADMINISTRADOR' as const,
         dataSolicitacao: Date.now(),
         dataAtualizacao: Date.now(),
         ultimoAcesso: Date.now(),
@@ -637,6 +664,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                       <input
                         type="text"
                         required
+                        maxLength={60}
                         value={usuario}
                         onChange={(e) => setUsuario(e.target.value)}
                         onFocus={handleFocusScroll}
@@ -655,6 +683,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                       <input
                         type="password"
                         required
+                        maxLength={128}
                         value={senha}
                         onChange={(e) => setSenha(e.target.value)}
                         onFocus={handleFocusScroll}
@@ -678,6 +707,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                       <input
                         type="text"
                         required
+                        maxLength={80}
                         value={usuario}
                         onChange={(e) => setUsuario(e.target.value)}
                         onFocus={handleFocusScroll}
@@ -700,6 +730,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                       <input
                         type="email"
                         required
+                        maxLength={100}
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         onFocus={handleFocusScroll}
@@ -719,6 +750,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                       <input
                         type="text"
                         required
+                        maxLength={20}
                         value={cnpj}
                         onChange={(e) => setCnpj(e.target.value)}
                         onFocus={handleFocusScroll}
@@ -738,6 +770,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                       <input
                         type="password"
                         required
+                        maxLength={128}
                         value={senha}
                         onChange={(e) => setSenha(e.target.value)}
                         onFocus={handleFocusScroll}
@@ -785,6 +818,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                     <input
                       type="text"
                       required
+                      maxLength={60}
                       value={nomeDispositivo}
                       onChange={(e) => setNomeDispositivo(e.target.value)}
                       placeholder="Ex: Celular Corporativo"

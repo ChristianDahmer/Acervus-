@@ -56,6 +56,19 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
     cnpjEmpresa: empresaConfig?.cnpj || '00.000.000/0001-00',
   });
 
+  const handleOpenAdd = () => {
+    setNovoUsuario({
+      nomeOperador: '',
+      email: '',
+      telefone: '',
+      nomeDispositivo: '',
+      hardwareId: '',
+      nivelAcesso: 'OPERADOR',
+      cnpjEmpresa: empresaConfig?.cnpj || '00.000.000/0001-00',
+    });
+    setIsAddModalOpen(true);
+  };
+
   // Estatísticas de Operadores e Dispositivos do Tenant
   const totalUsuarios = dispositivosAutorizados.length;
   const activeDevicesCount = dispositivosAutorizados.filter((d) => d.status === 'APROVADO').length;
@@ -228,11 +241,52 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
 
         <div className="flex items-center gap-2 shrink-0">
           <button
-            onClick={() => setIsAddModalOpen(true)}
+            onClick={handleOpenAdd}
             className="px-3.5 py-2 bg-[#D4AF37] hover:bg-[#b89628] text-black font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-lg"
           >
             <Plus size={15} />
             <span>Novo Operador</span>
+          </button>
+
+          <button
+            onClick={async () => {
+              try {
+                const currentUuid = localStorage.getItem('locadora_device_uuid') || 'DEV-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+                const savedDevStr = localStorage.getItem('locadora_authenticated_device');
+                let devToSync: DispositivoAutorizado;
+                if (savedDevStr) {
+                  devToSync = JSON.parse(savedDevStr);
+                } else {
+                  devToSync = {
+                    id: currentUuid,
+                    imei: currentUuid,
+                    nomeDispositivo: 'Terminal Principal Atual',
+                    cnpjEmpresa: empresaConfig?.cnpj || '00.000.000/0001-00',
+                    usuario: empresaConfig?.nomeRepresentante || 'Administrador do Sistema',
+                    email: empresaConfig?.email || 'admin@acervuscore.com.br',
+                    telefone: empresaConfig?.telefoneWhatsapp || '',
+                    nivelAcesso: 'ADMINISTRADOR',
+                    status: 'APROVADO',
+                    dataSolicitacao: Date.now(),
+                    dataAtualizacao: Date.now(),
+                    ultimoAcesso: Date.now(),
+                    permissoesModulos: ['inventario', 'reservas', 'clientes', 'financeiro', 'manutencao', 'relatorios', 'empresa', 'developer']
+                  };
+                }
+                await saveDocument('dispositivos_autorizados', devToSync.id, devToSync);
+                setActionMessage(`Seu usuário/dispositivo (${devToSync.usuario}) foi sincronizado com sucesso nos painéis.`);
+                if (onRefreshData) onRefreshData();
+                setTimeout(() => setActionMessage(null), 4000);
+              } catch (err) {
+                console.error(err);
+                alert('Erro ao sincronizar usuário atual.');
+              }
+            }}
+            className="px-3.5 py-2 bg-[#18181B] hover:bg-[#27272A] border border-[#27272A] text-[#D4AF37] text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+            title="Sincronizar seu usuário atual para garantir exibição nos painéis"
+          >
+            <UserCheck size={14} />
+            <span>Sincronizar Meu Usuário</span>
           </button>
 
           {onRefreshData && (
@@ -365,7 +419,7 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
             <p className="text-xs font-bold text-white">Nenhum operador ou usuário encontrado com os filtros selecionados.</p>
           </div>
         ) : (
-          filteredUsers.map((dispositivo) => {
+          filteredUsers.map((dispositivo, idx) => {
             const isApproved = dispositivo.status === 'APROVADO';
             const isRevoked = dispositivo.status === 'REVOGADO' || dispositivo.status === 'REJEITADO';
             const userRole = dispositivo.nivelAcesso || 'OPERADOR';
@@ -373,7 +427,7 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
 
             return (
               <div
-                key={dispositivo.id}
+                key={`${dispositivo.id || 'usr'}-${idx}`}
                 className={`bg-[#111113] border rounded-2xl p-4 shadow-xl transition-all space-y-3 ${
                   isApproved 
                     ? 'border-[#27272A] hover:border-[#D4AF37]/40' 
@@ -475,8 +529,8 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
                 <div className="pt-2 border-t border-[#27272A]/60 flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#A1A1AA]">
                   <div className="flex flex-wrap gap-1 items-center">
                     <span className="font-mono text-[#71717A] uppercase mr-1">Permissões de Módulo:</span>
-                    {(dispositivo.permissoesModulos || ['inventario', 'reservas', 'clientes', 'financeiro']).map((m) => (
-                      <span key={m} className="px-2 py-0.5 rounded bg-[#18181B] border border-[#27272A] text-zinc-300 font-mono">
+                    {(dispositivo.permissoesModulos || ['inventario', 'reservas', 'clientes', 'financeiro']).map((m, mIdx) => (
+                      <span key={`${m}-${mIdx}`} className="px-2 py-0.5 rounded bg-[#18181B] border border-[#27272A] text-zinc-300 font-mono">
                         {m}
                       </span>
                     ))}
@@ -515,6 +569,7 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
                 <input
                   type="text"
                   required
+                  maxLength={80}
                   placeholder="Ex: Carlos Eduardo Silveira"
                   value={novoUsuario.nomeOperador}
                   onChange={(e) => setNovoUsuario({ ...novoUsuario, nomeOperador: e.target.value })}
@@ -527,6 +582,7 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
                   <label className="block text-xs font-semibold text-[#A1A1AA] mb-1">E-mail Corporativo</label>
                   <input
                     type="email"
+                    maxLength={100}
                     placeholder="carlos@empresa.com.br"
                     value={novoUsuario.email}
                     onChange={(e) => setNovoUsuario({ ...novoUsuario, email: e.target.value })}
@@ -538,6 +594,7 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
                   <label className="block text-xs font-semibold text-[#A1A1AA] mb-1">Telefone / WhatsApp</label>
                   <input
                     type="text"
+                    maxLength={20}
                     placeholder="(11) 99999-8888"
                     value={novoUsuario.telefone}
                     onChange={(e) => setNovoUsuario({ ...novoUsuario, telefone: e.target.value })}
@@ -551,6 +608,7 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
                   <label className="block text-xs font-semibold text-[#A1A1AA] mb-1">Modelo do Dispositivo Autorizado</label>
                   <input
                     type="text"
+                    maxLength={60}
                     placeholder="Ex: Samsung Tab S9 / iPhone 15"
                     value={novoUsuario.nomeDispositivo}
                     onChange={(e) => setNovoUsuario({ ...novoUsuario, nomeDispositivo: e.target.value })}
@@ -577,6 +635,7 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
                 <label className="block text-xs font-semibold text-[#A1A1AA] mb-1">Hardware UUID / IMEI (Opcional)</label>
                 <input
                   type="text"
+                  maxLength={100}
                   placeholder="Deixe em branco para gerar UUID dinâmico de segurança"
                   value={novoUsuario.hardwareId}
                   onChange={(e) => setNovoUsuario({ ...novoUsuario, hardwareId: e.target.value })}

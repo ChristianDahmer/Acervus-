@@ -298,3 +298,108 @@ export const createGoogleContact = async (
 
   return await res.json();
 };
+
+/**
+ * GOOGLE DRIVE API: Uploads a file (e.g. JSON backup) to Google Drive
+ */
+export const uploadFileToGoogleDrive = async (
+  accessToken: string,
+  fileName: string,
+  content: string,
+  mimeType: string = 'application/json',
+  folderPathOrName: string = '/Bora Festar Locações/Backups'
+): Promise<{ id: string; name: string; webViewLink?: string }> => {
+  if (!accessToken) {
+    throw new Error('Token de acesso do Google Drive não encontrado. Conecte sua conta do Google.');
+  }
+
+  const rawFolderName = folderPathOrName.split('/').filter(Boolean).pop() || 'Backups Acervus Core';
+
+  // 1. Search or create destination folder
+  let folderId: string | null = null;
+  try {
+    const searchRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=name='${encodeURIComponent(rawFolderName)}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+      }
+    );
+    if (searchRes.ok) {
+      const searchData = await searchRes.json();
+      if (searchData.files && searchData.files.length > 0) {
+        folderId = searchData.files[0].id;
+      }
+    }
+  } catch (err) {
+    console.warn('[GoogleDrive] Erro ao buscar pasta de destino, enviando para a raiz do Drive:', err);
+  }
+
+  if (!folderId) {
+    try {
+      const createFolderRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: rawFolderName,
+          mimeType: 'application/vnd.google-apps.folder'
+        })
+      });
+      if (createFolderRes.ok) {
+        const folderData = await createFolderRes.json();
+        folderId = folderData.id;
+      }
+    } catch (err) {
+      console.warn('[GoogleDrive] Erro ao criar pasta de destino, enviando para a raiz do Drive:', err);
+    }
+  }
+
+  // 2. Upload file via Multipart API
+  const metadata: any = {
+    name: fileName,
+    mimeType: mimeType
+  };
+  if (folderId) {
+    metadata.parents = [folderId];
+  }
+
+  const boundary = '-------314159265358979323846';
+  const delimiter = "\r\n--" + boundary + "\r\n";
+  const close_delim = "\r\n--" + boundary + "--";
+
+  const multipartRequestBody =
+    delimiter +
+    'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+    JSON.stringify(metadata) +
+    delimiter +
+    `Content-Type: ${mimeType}\r\n\r\n` +
+    content +
+    close_delim;
+
+  const uploadRes = await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink',
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`
+      },
+      body: multipartRequestBody
+    }
+  );
+
+  if (!uploadRes.ok) {
+    const errText = await uploadRes.text();
+    throw new Error(`Falha no upload para o Google Drive (${uploadRes.status}): ${errText}`);
+  }
+
+  const fileData = await uploadRes.json();
+  return {
+    id: fileData.id,
+    name: fileData.name,
+    webViewLink: fileData.webViewLink
+  };
+};
+

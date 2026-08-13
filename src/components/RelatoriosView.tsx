@@ -73,6 +73,7 @@ interface RelatoriosViewProps {
     dataRetirada: number,
     dataDevolucao: number
   ) => void;
+  onNavigateToCreateOrcamento?: () => void;
 }
 
 export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
@@ -88,6 +89,7 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
   googleAccount,
   onCreateGoogleForm,
   onSimulateCustomerSubmit = () => {},
+  onNavigateToCreateOrcamento,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'contratos' | 'reservas' | 'acervo'>('contratos');
   const [fillModalMode, setFillModalMode] = useState<'editar' | 'visualizar'>('editar');

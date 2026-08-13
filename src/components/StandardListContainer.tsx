@@ -358,6 +358,7 @@ export interface StandardEmptyStateProps {
   description?: string;
   onClearFilters?: () => void;
   actionText?: string;
+  actionIcon?: React.ReactNode;
   onAction?: () => void;
 }
 
@@ -367,6 +368,7 @@ export const StandardEmptyState: React.FC<StandardEmptyStateProps> = ({
   description = 'Não foram encontrados resultados correspondentes aos seus termos de busca e filtros selecionados.',
   onClearFilters,
   actionText,
+  actionIcon,
   onAction,
 }) => {
   return (
@@ -397,6 +399,7 @@ export const StandardEmptyState: React.FC<StandardEmptyStateProps> = ({
             onClick={onAction}
             className="inline-flex items-center gap-1.5 bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A0A0B] px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer shadow-md active:scale-95"
           >
+            {actionIcon}
             <span>{actionText}</span>
           </button>
         )}

@@ -149,3 +149,14 @@ export const maintenanceRecords = pgTable('maintenance_records', {
   primaryKey({ columns: [table.tenantId, table.id] }),
   index('idx_maint_tenant_stock').on(table.tenantId, table.stockItemId),
 ]);
+
+// 9. TENANT CONFIGS (Configurações dinâmicas de cada empresa usuária)
+export const tenantConfigs = pgTable('tenant_configs', {
+  tenantId: text('tenant_id').notNull(),
+  configName: text('config_name').notNull(),
+  data: jsonb('data').notNull(),
+  updatedAt: timestamp('updated_at', { mode: 'date' }).defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.tenantId, table.configName] }),
+  index('idx_tenant_configs_tenant_config').on(table.tenantId, table.configName),
+]);

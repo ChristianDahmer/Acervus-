@@ -33,9 +33,11 @@ import {
   BookOpen,
   Server,
   Layers,
+  Sliders,
+  LogOut,
   RefreshCw as RefreshIcon
 } from 'lucide-react';
-import { saveDocument, deleteDocument, fetchCollection } from '../lib/firebaseSync';
+import { saveDocument, deleteDocument, fetchCollection, getActiveTenantId } from '../lib/firebaseSync';
 import { NfseAndroidDocView } from './NfseAndroidDocView';
 import { DatabaseExplorerView } from './DatabaseExplorerView';
 import { ClientUserAccessControlView } from './ClientUserAccessControlView';
@@ -49,6 +51,7 @@ interface DeveloperTestPanelProps {
   empresaConfig?: EmpresaConfig;
   onTriggerWorkerSync: () => void;
   onRefreshData: () => Promise<void>;
+  onSaveConfig?: (newConfig: EmpresaConfig) => void;
   hideHeader?: boolean;
 }
 
@@ -61,10 +64,11 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
   empresaConfig,
   onTriggerWorkerSync,
   onRefreshData,
+  onSaveConfig,
   hideHeader = false,
 }) => {
-  // Authentication State
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  // Authentication State (Acesso direto sem PIN/senha)
+  const [isAuthenticated, setIsAuthenticated] = useState(true);
   const [devTab, setDevTab] = useState<'debug' | 'db_explorer' | 'access_control' | 'docs'>('debug');
   const [enteredPin, setEnteredPin] = useState('');
   const [pinError, setPinError] = useState<string | null>(null);
@@ -93,6 +97,103 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
   const [latencyActive, setLatencyActive] = useState(false);
   const [simulatedErrorActive, setSimulatedErrorActive] = useState(false);
   const [isTestingCloudSql, setIsTestingCloudSql] = useState(false);
+  const [isChangingAmbiente, setIsChangingAmbiente] = useState(false);
+  const [isKillingSessions, setIsKillingSessions] = useState(false);
+
+  const handleAmbienteChange = async (novoAmbiente: 'teste' | 'producao') => {
+    if (isChangingAmbiente) return;
+
+    const tenantId = empresaConfig?.cnpj?.replace(/\D/g, '') || getActiveTenantId();
+    addLog(`⚙️ [Orchestrator] Alterando ambiente operacional do sistema para: ${novoAmbiente.toUpperCase()}`, 'warn');
+
+    try {
+      setIsChangingAmbiente(true);
+
+      if (novoAmbiente === 'producao') {
+        addLog('[GCP Cloud SQL] Executando purga remota de tabelas no PostgreSQL...', 'info');
+        // 1. Purga o banco remoto no Cloud SQL
+        await fetch('/api/admin/wipe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId },
+          body: JSON.stringify({ tenantId })
+        }).catch(() => {});
+
+        addLog('[Kernel DB] Marcando estado limpo no localStorage...', 'info');
+        // 2. Marca o estado de sistema limpo no localStorage
+        localStorage.setItem('locadora_wiped_state', 'true');
+        localStorage.setItem(`locadora_wiped_state_${tenantId}`, 'true');
+
+        addLog('[Room Cache] Limpando cache SQLite offline local...', 'info');
+        // Limpa chaves de cache local específicas de coleções
+        const localKeys = ['itens', 'clientes', 'reservas', 'categorias', 'transacoes', 'manutencoes', 'webForms', 'modelosContratos'];
+        localKeys.forEach((k) => {
+          localStorage.removeItem(`offline_db_${k}`);
+          localStorage.removeItem(`offline_db_${tenantId}_${k}`);
+        });
+
+        addLog('[Multi-Tenant] Salvando configurações do inquilino no Firestore...', 'info');
+        // 3. Salva a configuração atualizada
+        const novaConfig: EmpresaConfig = {
+          ...empresaConfig,
+          ambienteSistema: 'producao'
+        };
+        if (onSaveConfig) {
+          await onSaveConfig(novaConfig);
+        }
+
+        addLog('[LiveSync] Sincronização em tempo real reconfigurada.', 'success');
+        // 4. Recarrega os dados na memória reativamente sem reiniciar a aplicação
+        if (onRefreshData) {
+          await onRefreshData();
+        }
+        addLog('🟢 Sistema configurado e operando no MODO PRODUÇÃO OFICIAL!', 'success');
+      } else {
+        // Alternando para MODO TESTE
+        addLog('[Room Cache] Liberando travas de wipe do SQLite local...', 'info');
+        // 1. Remove marcadores de wiped para permitir re-seeding
+        localStorage.removeItem('locadora_wiped_state');
+        localStorage.removeItem(`locadora_wiped_state_${tenantId}`);
+
+        addLog('[Room Cache] Limpando cache para permitir injeção semente...', 'info');
+        // Limpa cache local para garantir recarga completa dos dados de teste
+        const localKeys = ['itens', 'clientes', 'reservas', 'categorias', 'transacoes', 'manutencoes', 'webForms', 'modelosContratos'];
+        localKeys.forEach((k) => {
+          localStorage.removeItem(`offline_db_${k}`);
+          localStorage.removeItem(`offline_db_${tenantId}_${k}`);
+        });
+
+        addLog('[GCP Cloud SQL] Executando injeção semente (Database Seeder) remota no PostgreSQL...', 'info');
+        // 2. Re-seeda dados no Cloud SQL
+        await fetch('/api/admin/seed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-tenant-id': tenantId },
+          body: JSON.stringify({ tenantId })
+        }).catch(() => {});
+
+        addLog('[Multi-Tenant] Salvando configurações do inquilino no Firestore...', 'info');
+        // 3. Salva a configuração com ambienteSistema = 'teste'
+        const novaConfig: EmpresaConfig = {
+          ...empresaConfig,
+          ambienteSistema: 'teste'
+        };
+        if (onSaveConfig) {
+          await onSaveConfig(novaConfig);
+        }
+
+        addLog('[LiveSync] Snapshots reativos em tempo real ativados.', 'success');
+        // 4. Recarrega os dados na memória reativamente sem reiniciar a aplicação
+        if (onRefreshData) {
+          await onRefreshData();
+        }
+        addLog('🟢 Sistema configurado e operando no MODO TESTE / HOMOLOGAÇÃO!', 'success');
+      }
+    } catch (err: any) {
+      addLog(`🔴 Erro ao alterar ambiente do sistema: ${err.message}`, 'error');
+      console.error("Erro ao alterar ambiente do sistema:", err);
+    } finally {
+      setIsChangingAmbiente(false);
+    }
+  };
 
   const handleTestCloudSql = async () => {
     setIsTestingCloudSql(true);
@@ -168,102 +269,39 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
     try {
       setIsWiping(true);
       addLog('==================================================================', 'warn');
-      addLog('⚙️ INICIANDO OPERAÇÃO SISTÊMICA: WIPE DE BANCO DE DADOS DETALHADO', 'warn');
+      addLog('⚙️ INICIANDO OPERAÇÃO SISTÊMICA: WIPE DE BANCO DE DADOS (Cloud SQL PostgreSQL)', 'warn');
       addLog('==================================================================', 'warn');
       addLog(`Dispositivo Alvo: ${localStorage.getItem('locadora_device_uuid') || 'UUID-Dispositivo-Nao-Registrado'}`, 'info');
       addLog('Iniciador da Ação: Sênior Developer Admin Shell Console', 'info');
-      addLog('Barramento de Dados: Google Cloud Firestore IPC Engine', 'info');
-      addLog('Protocolo de Redundância: Offline SQLite State Fallback', 'info');
+      addLog('Barramento de Dados: Google Cloud SQL PostgreSQL (Drizzle ORM)', 'info');
       addLog('------------------------------------------------------------------', 'info');
-      
-      const collectionsToWipe = [
-        { key: 'itens', label: 'Equipamentos do Acervo (Inventário)' },
-        { key: 'clientes', label: 'Clientes do CRM (Contatos)' },
-        { key: 'reservas', label: 'Contratos & Reservas Ativas' },
-        { key: 'categorias', label: 'Categorias do Portfólio' },
-        { key: 'transacoes', label: 'Lançamentos Financeiros (Fluxo de Caixa)' },
-        { key: 'manutencoes', label: 'Histórico de Manutenções Preventivas' },
-        { key: 'modelosContratos', label: 'Modelos de Contratos Jurídicos' },
-        { key: 'webForms', label: 'Leads de Orçamentos de Formulário Web' },
-        { key: 'dispositivos_autorizados', label: 'Terminais MDM Autorizados' },
-        { key: 'system_configs', label: 'Metadados & Parâmetros de Sistema' }
-      ];
 
-      addLog(`Detecção do Schema de Banco concluída. ${collectionsToWipe.length} tabelas listadas para truncamento total:`, 'info');
-      collectionsToWipe.forEach((col, index) => {
-        addLog(`  -> [Tabela #${index + 1}] Chave: "${col.key}" | Finalidade: ${col.label}`, 'info');
+      const tenantId = empresaConfig?.cnpj || '45.678.910/0001-23';
+      addLog(`[Syslog] Solicitando purga e truncamento no Cloud SQL para o tenant: ${tenantId}`, 'info');
+
+      const res = await fetch('/api/admin/wipe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-tenant-id': tenantId,
+        },
+        body: JSON.stringify({ tenantId }),
       });
-      addLog('------------------------------------------------------------------', 'info');
-      addLog('Aviso: Parando listeners reativos de rede temporariamente para wipe seguro...', 'warn');
-      addLog('Iniciando varredura sequencial de coleções...', 'info');
-      
-      for (const col of collectionsToWipe) {
-        const colName = col.key;
-        try {
-          addLog(`[Syslog] Abrindo cursor para a coleção física: "${colName}"...`, 'info');
-          const colRef = collection(db, colName);
-          const snap = await getDocs(colRef);
-          
-          if (snap.docs.length === 0) {
-            addLog(`[ADB Output] Tabela "${colName}" (${col.label}) já está vazia. Truncamento desnecessário.`, 'success');
-            continue;
-          }
 
-          addLog(`[ADB Output] Tabela "${colName}" (${col.label}) contêm ${snap.docs.length} registros ativos. Executando purga...`, 'warn');
-          let count = 0;
-          
-          for (const docSnap of snap.docs) {
-            const data = docSnap.data();
-            let details = `ID: ${docSnap.id}`;
-            
-            if (data) {
-              if (colName === 'itens' && data.nome) {
-                details += ` [Equipamento: "${data.nome}" | Categoria: ${data.categoria || 'N/A'} | Qtd: ${data.quantidade || 1}]`;
-              } else if (colName === 'clientes' && data.nome) {
-                details += ` [Cliente: "${data.nome}" | E-mail: ${data.email || 'N/A'} | Telefone: ${data.telefone || 'N/A'}]`;
-              } else if (colName === 'reservas' && data.reserva) {
-                details += ` [Contrato #${data.reserva.numeroContrato || docSnap.id} | Cliente: "${data.reserva.clienteNome}" | Período: ${data.reserva.dataEntrega || ''} a ${data.reserva.dataDevolucao || ''} | Status: ${data.reserva.status || 'N/A'}]`;
-              } else if (colName === 'categorias' && data.nome) {
-                details += ` [Categoria: "${data.nome}" | Ícone: ${data.icone || 'N/A'}]`;
-              } else if (colName === 'transacoes') {
-                details += ` [Financeiro: "${data.descricao || 'Sem descrição'}" | Tipo: ${data.tipo || 'N/A'} | Valor: R$ ${data.valor || 0} | Status: ${data.status || 'N/A'}]`;
-              } else if (colName === 'manutencoes' && data.itemName) {
-                details += ` [Manutenção: "${data.itemName}" | Motivo: "${data.motivo || 'N/A'}" | Custo: R$ ${data.custo || 0}]`;
-              } else if (colName === 'modelosContratos' && data.titulo) {
-                details += ` [Modelo Contrato: "${data.titulo}" | Tipo: ${data.tipo || 'N/A'}]`;
-              } else if (colName === 'webForms' && data.clienteNome) {
-                details += ` [Lead Web: "${data.clienteNome}" | Evento: "${data.nomeEvento || 'N/A'}" | Orçamento Estimado: R$ ${data.orcamentoEstimado || 0}]`;
-              } else if (colName === 'dispositivos_autorizados') {
-                details += ` [Terminal MDM: "${data.nomeDispositivo || 'Sem nome'}" | UUID: ${data.uuid || 'N/A'}]`;
-              } else {
-                if (data.nome) details += ` ("${data.nome}")`;
-                else if (data.titulo) details += ` ("${data.titulo}")`;
-                else if (data.descricao) details += ` ("${data.descricao}")`;
-                else if (data.valor !== undefined) details += ` (Valor: R$ ${data.valor})`;
-              }
-            }
-
-            await deleteDoc(docSnap.ref);
-            addLog(`[Syslog] DELETED -> ${colName}::${details}`, 'warn');
-            count++;
-          }
-          addLog(`[ADB Output] Truncamento concluído para "${colName}". Total de registros deletados: ${count}.`, 'success');
-        } catch (colErr: any) {
-          addLog(`[Syslog] Falha crítica ao acessar/limpar a coleção "${colName}": ${colErr.message}`, 'error');
-        }
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Falha ao executar wipe no Cloud SQL PostgreSQL');
       }
 
-      addLog('------------------------------------------------------------------', 'info');
-      // Explicitly write the wiped state document to system_configs to prevent auto-seeding
-      addLog('[Syslog] Gravando marcador sistêmico "wiped: true" no Cloud Firestore...', 'info');
-      await saveDocument('system_configs', 'seeded', { done: false, wiped: true });
-      addLog('[ADB Output] Marcador sistêmico "wiped: true" gravado na tabela "system_configs" com sucesso.', 'success');
+      const resJson = await res.json();
+      addLog(`[ADB Output] ${resJson.message || 'Dados purgados do Cloud SQL com sucesso.'}`, 'success');
 
       localStorage.setItem('locadora_wiped_state', 'true');
       
       // Clear offline local storage collections & configs
-      collectionsToWipe.forEach((col) => {
-        localStorage.removeItem(`offline_db_${col.key}`);
+      const localKeys = ['itens', 'clientes', 'reservas', 'categorias', 'transacoes', 'manutencoes', 'modelosContratos', 'webForms', 'dispositivos_autorizados'];
+      localKeys.forEach((key) => {
+        localStorage.removeItem(`offline_db_${key}`);
       });
       localStorage.removeItem('offline_config_empresaConfig');
       localStorage.removeItem('offline_config_themeConfig');
@@ -271,14 +309,14 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
       addLog('[ADB Output] Cache offline local (localStorage) purgado com sucesso.', 'success');
 
       addLog('==================================================================', 'success');
-      addLog('🟢 WIPE DE BANCO DE DADOS E LIMPEZA DE TABELAS CONCLUÍDO COM SUCESSO', 'success');
+      addLog('🟢 WIPE DE BANCO DE DADOS CLOUD SQL & CACHE CONCLUÍDO COM SUCESSO', 'success');
       addLog('==================================================================', 'success');
       
       // Force reload UI data mapping
-      await onRefreshData();
+      if (onRefreshData) await onRefreshData();
       setShowWipeConfirm(false);
     } catch (err: any) {
-      addLog(`Erro crítico durante purga global do Firestore: ${err.message}`, 'error');
+      addLog(`Erro crítico durante purga do Cloud SQL: ${err.message}`, 'error');
     } finally {
       setIsWiping(false);
     }
@@ -387,6 +425,34 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
     } else {
       localStorage.removeItem('dev_simulated_error');
       addLog('Injetor de falhas desativado.', 'success');
+    }
+  };
+
+  const handleKillAllSessions = async () => {
+    try {
+      setIsKillingSessions(true);
+      addLog('Iniciando encerramento global de sessões...', 'info');
+      
+      const activeDevices = dispositivos.filter(d => d.status === 'APROVADO');
+      for (const d of activeDevices) {
+        // ALTERADO: Apenas limpa os dados da sessão do usuário ativo para deslogar, mantendo o hardware autorizado
+        await saveDocument('dispositivos_autorizados', d.id, { ...d, usuario: undefined, email: undefined, senha: undefined });
+      }
+
+      localStorage.removeItem('locadora_authenticated_device');
+      localStorage.removeItem('locadora_session_timestamp');
+      localStorage.removeItem('locadora_session_environment');
+      localStorage.removeItem('locadora_active_url_tenant');
+      localStorage.setItem('locadora_logged_off', 'true');
+      
+      addLog(`Encerradas ${activeDevices.length} sessões remotas. Sessão local finalizada.`, 'success');
+      alert('Todas as sessões de Teste e Produção foram encerradas com sucesso! Você será desconectado.');
+      
+      window.location.reload();
+    } catch (err: any) {
+      addLog(`Erro ao encerrar sessões: ${err.message}`, 'error');
+    } finally {
+      setIsKillingSessions(false);
     }
   };
 
@@ -544,104 +610,11 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
               Central corporativa de testes de regressão, testes de estresse, injeção de falhas e análise de performance em tempo real de conexões Firestore e GCP.
             </p>
           </div>
-
-          {isAuthenticated && (
-            <button 
-              onClick={() => setIsAuthenticated(false)}
-              className="px-3.5 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 hover:text-red-300 rounded-xl text-xs font-semibold transition-all cursor-pointer"
-            >
-              Bloquear Painel
-            </button>
-          )}
         </div>
-      ) : (
-        isAuthenticated && (
-          <div className="flex justify-end">
-            <button 
-              onClick={() => setIsAuthenticated(false)}
-              className="px-3.5 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 hover:text-red-300 rounded-xl text-xs font-semibold transition-all cursor-pointer"
-            >
-              Bloquear Painel
-            </button>
-          </div>
-        )
-      )}
+      ) : null}
 
-      {/* Login Gate Screen with Dynamic Renewable Passcode */}
-      {!isAuthenticated ? (
-        <div className="max-w-md mx-auto bg-[#111113] border border-[#27272A] rounded-3xl p-6 shadow-2xl relative">
-          <div className="flex flex-col items-center text-center space-y-4">
-            <div className="w-12 h-12 rounded-2xl bg-[#D4AF37]/10 border border-[#D4AF37]/30 flex items-center justify-center text-[#D4AF37]">
-              <Lock size={22} />
-            </div>
-            <div>
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono">Autenticação Requerida</h3>
-              <p className="text-[#A1A1AA] text-xs mt-1">
-                Insira o PIN dinâmico temporário para desbloquear as ferramentas de desenvolvimento.
-              </p>
-            </div>
-
-            <form onSubmit={handleAuthenticate} className="w-full space-y-4">
-              <div>
-                <label className="block text-left text-[10px] text-[#71717A] uppercase tracking-wider font-semibold mb-1.5 pl-1">
-                  Chave Dinâmica de Uso Exclusivo
-                </label>
-                <div className="relative">
-                  <input
-                    type="password"
-                    maxLength={6}
-                    value={enteredPin}
-                    onChange={(e) => setEnteredPin(e.target.value)}
-                    placeholder="Ex: 5890"
-                    className="w-full bg-[#18181B] border border-[#27272A] text-[#D4AF37] text-center font-mono text-lg py-2.5 px-3.5 rounded-xl focus:outline-none focus:border-[#D4AF37] focus:ring-1 focus:ring-[#D4AF37]/50"
-                  />
-                </div>
-                {pinError && (
-                  <span className="text-[10px] text-red-400 font-medium mt-1.5 block text-left">
-                    ⚠️ {pinError}
-                  </span>
-                )}
-              </div>
-
-              {/* Algorithm explanation for senior engineers */}
-              <div className="bg-[#0A0A0B] border border-[#27272A] rounded-2xl p-4 text-left font-mono text-[10px] text-[#A1A1AA] space-y-2">
-                <div className="text-white font-semibold flex items-center gap-1.5">
-                  <Cpu size={12} className="text-[#D4AF37]" /> Algoritmo TOTP-Acervus 2026:
-                </div>
-                <p className="leading-relaxed">
-                  Para fins de teste, o PIN de hoje é calculado com base no dia e ano:
-                </p>
-                <div className="bg-[#111113] p-2 rounded-lg border border-[#27272A] text-[#D4AF37] font-bold text-center break-all">
-                  PIN = (Dia * Mês * 23 + Ano) % 10000
-                </div>
-                <div className="text-[9px] text-[#71717A] flex justify-between items-center">
-                  <span>Semente Ativa: {currentDate.toLocaleDateString()}</span>
-                  <button 
-                    type="button" 
-                    onClick={() => {
-                      addLog(`Gerando PIN automático via algoritmo TOTP local: ${expectedPin} (${expectedPinFormula})`, 'info');
-                      setEnteredPin(expectedPin);
-                      setPinError(`Fórmula calculada com sucesso: ${expectedPinFormula}`);
-                    }}
-                    className="text-[#D4AF37] underline hover:text-[#E5C158]"
-                  >
-                    Calcular Automatizado
-                  </button>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-2.5 bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A0A0B] text-xs font-bold uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-lg shadow-[#D4AF37]/10"
-              >
-                Autenticar & Liberar Porta ADB
-              </button>
-            </form>
-          </div>
-        </div>
-      ) : (
-        /* Authenticated Developer Workspace Grid */
-        <div className="space-y-6">
+      {/* Developer Workspace Grid */}
+      <div className="space-y-6">
           {/* Developer Workspace Navigation Tabs */}
           <div className="flex flex-nowrap border-b border-[#27272A] pb-px overflow-x-auto select-none gap-2 no-scrollbar">
             <button
@@ -727,6 +700,56 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
                       <RefreshCw size={14} className={isTestingCloudSql ? 'animate-spin' : ''} />
                       <span>{isTestingCloudSql ? 'Testando...' : 'Testar Conexão SQL'}</span>
                     </button>
+                  </div>
+
+                  {/* Ambiente Operacional do Sistema (Teste vs Produção) */}
+                  <div className="bg-[#18181B] border border-[#27272A] rounded-2xl p-4 space-y-3">
+                    <label className="block font-medium text-[#E4E4E7] text-xs uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                      <Sliders size={14} className="text-[#D4AF37]" /> Ambiente Operacional do Acervus Core
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        disabled={isChangingAmbiente}
+                        onClick={() => handleAmbienteChange('teste')}
+                        className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                          (empresaConfig?.ambienteSistema || 'producao') === 'teste'
+                            ? 'bg-amber-500/15 border-amber-500/50 text-white'
+                            : 'bg-[#111113] border-[#27272A] text-[#A1A1AA] hover:border-[#3F3F46]'
+                        } ${isChangingAmbiente ? 'opacity-50 cursor-wait' : ''}`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-xs uppercase tracking-wider text-amber-400 font-mono">Modo Teste / Homologação</span>
+                          {(empresaConfig?.ambienteSistema || 'producao') === 'teste' && (
+                            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                          )}
+                        </div>
+                        <p className="text-[11px] text-[#A1A1AA]">
+                          Simulações, testes de carga, operações reativas em tempo real com dados de exemplo.
+                        </p>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={isChangingAmbiente}
+                        onClick={() => handleAmbienteChange('producao')}
+                        className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                          (empresaConfig?.ambienteSistema || 'producao') === 'producao'
+                            ? 'bg-emerald-500/15 border-emerald-500/50 text-white'
+                            : 'bg-[#111113] border-[#27272A] text-[#A1A1AA] hover:border-[#3F3F46]'
+                        } ${isChangingAmbiente ? 'opacity-50 cursor-wait' : ''}`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-xs uppercase tracking-wider text-emerald-400 font-mono">Modo Produção Oficial</span>
+                          {(empresaConfig?.ambienteSistema || 'producao') === 'producao' && (
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                          )}
+                        </div>
+                        <p className="text-[11px] text-[#A1A1AA]">
+                          Operação real estruturada diretamente via PostgreSQL com purga de dados simulados.
+                        </p>
+                      </button>
+                    </div>
                   </div>
                   
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -832,6 +855,27 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
                         className="px-3 py-1.5 bg-[#111113] border border-[#27272A] hover:border-emerald-500/40 text-emerald-400 text-[11px] font-bold rounded-xl transition-all cursor-pointer"
                       >
                         Forçar Aprovado
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Sessões globais */}
+                  <div className="bg-[#18181B] border border-amber-900/40 p-4 rounded-2xl space-y-3">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="text-xs font-bold text-amber-400 font-mono flex items-center gap-1.5">
+                          <LogOut size={14} /> Encerrar Todas as Sessões
+                        </h4>
+                        <p className="text-[11px] text-[#A1A1AA] mt-0.5 max-w-sm">
+                          Revoga os acessos de todos os dispositivos ativos (modo teste e produção) e finaliza sua sessão atual.
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleKillAllSessions}
+                        disabled={isKillingSessions}
+                        className="px-3 py-1.5 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 text-amber-400 text-[11px] font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap"
+                      >
+                        {isKillingSessions ? 'Encerrando...' : 'Encerrar Sessões'}
                       </button>
                     </div>
                   </div>
@@ -1093,10 +1137,12 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
               itens={itens}
               reservas={reservas}
               dispositivosAutorizados={dispositivos}
-              transacoes={[]}
-              manutencoes={[]}
-              modelosContrato={[]}
-              empresaConfig={{}}
+              transacoes={INITIAL_FINANCE_TRANSACTIONS}
+              manutencoes={INITIAL_MAINTENANCE_LOGS}
+              modelosContrato={INITIAL_MODELOS_CONTRATO}
+              categorias={INITIAL_CATEGORIAS}
+              empresaConfig={empresaConfig || INITIAL_EMPRESA_CONFIG}
+              tenantId={empresaConfig?.cnpj || '45.678.910/0001-23'}
               onRefreshData={onRefreshData}
             />
           ) : devTab === 'access_control' ? (
@@ -1109,7 +1155,6 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
             <NfseAndroidDocView />
           )}
         </div>
-      )}
     </div>
   );
 };

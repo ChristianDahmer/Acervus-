@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { EmpresaConfig } from '../types';
 import { 
   Instagram, 
   ShieldCheck, 
@@ -648,7 +649,11 @@ const BouncingBubblesStage: React.FC<{
   );
 };
 
-export const InstagramSorteioModule: React.FC = () => {
+interface InstagramSorteioModuleProps {
+  empresaConfig?: EmpresaConfig;
+}
+
+export const InstagramSorteioModule: React.FC<InstagramSorteioModuleProps> = ({ empresaConfig }) => {
   const [subTab, setSubTab] = useState<'simulator' | 'architecture' | 'code' | 'lgpd'>('simulator');
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [showArenaModal, setShowArenaModal] = useState<boolean>(false);
@@ -696,18 +701,18 @@ export const InstagramSorteioModule: React.FC = () => {
   const [drawSeedHash, setDrawSeedHash] = useState<string>('');
   const [showAuditModal, setShowAuditModal] = useState(false);
 
-  // Meta Graph API Configuration States
-  const [apiClientId, setApiClientId] = useState('410294810293810');
-  const [apiClientSecret, setApiClientSecret] = useState('app_secret_7f8g9h1k2l3m4n5o6p');
-  const [apiAccessToken, setApiAccessToken] = useState('EAAdF8aZA5b6MBO4pZC2ZC1ZA9V9XyMvZCpK68D3l16Xf83hK0y7yZAZBcZApZAJZB1ZCs9mZB3oZD');
-  const [apiVersion, setApiVersion] = useState('v19.0');
-  const [apiBusinessId, setApiBusinessId] = useState('17841405193810294');
+  // Meta Graph API Configuration States - synchronized from EmpresaConfig.instagramConfig
+  const [apiClientId, setApiClientId] = useState(() => empresaConfig?.instagramConfig?.apiClientId || '410294810293810');
+  const [apiClientSecret, setApiClientSecret] = useState(() => empresaConfig?.instagramConfig?.apiClientSecret || 'app_secret_7f8g9h1k2l3m4n5o6p');
+  const [apiAccessToken, setApiAccessToken] = useState(() => empresaConfig?.instagramConfig?.apiAccessToken || 'EAAdF8aZA5b6MBO4pZC2ZC1ZA9V9XyMvZCpK68D3l16Xf83hK0y7yZAZBcZApZAJZB1ZCs9mZB3oZD');
+  const [apiVersion, setApiVersion] = useState(() => empresaConfig?.instagramConfig?.apiVersion || 'v19.0');
+  const [apiBusinessId, setApiBusinessId] = useState(() => empresaConfig?.instagramConfig?.apiBusinessId || '17841405193810294');
   const [showApiConfig, setShowApiConfig] = useState(false);
 
   // Advanced Token Security & Lifecycle (Android Specialist Requirements)
-  const [tokenType, setTokenType] = useState<'short-lived' | 'long-lived'>('long-lived');
-  const [tokenExpiration, setTokenExpiration] = useState('Expira em 60 dias (02/10/2026)');
-  const [isTokenSecured, setIsTokenSecured] = useState(true);
+  const [tokenType, setTokenType] = useState<'short-lived' | 'long-lived'>(() => empresaConfig?.instagramConfig?.tokenType || 'long-lived');
+  const [tokenExpiration, setTokenExpiration] = useState(() => empresaConfig?.instagramConfig?.tokenExpiration || 'Expira em 60 dias (02/10/2026)');
+  const [isTokenSecured, setIsTokenSecured] = useState(() => empresaConfig?.instagramConfig?.isTokenSecured !== false);
   const [isValidatingApi, setIsValidatingApi] = useState(false);
   const [apiScopes, setApiScopes] = useState({
     instagram_basic: true,
@@ -715,6 +720,21 @@ export const InstagramSorteioModule: React.FC = () => {
     pages_read_engagement: true,
     pages_show_list: true,
   });
+
+  // Sync state if company config changes
+  useEffect(() => {
+    if (empresaConfig?.instagramConfig) {
+      const cfg = empresaConfig.instagramConfig;
+      if (cfg.apiClientId) setApiClientId(cfg.apiClientId);
+      if (cfg.apiClientSecret) setApiClientSecret(cfg.apiClientSecret);
+      if (cfg.apiAccessToken) setApiAccessToken(cfg.apiAccessToken);
+      if (cfg.apiVersion) setApiVersion(cfg.apiVersion);
+      if (cfg.apiBusinessId) setApiBusinessId(cfg.apiBusinessId);
+      if (cfg.tokenType) setTokenType(cfg.tokenType);
+      if (cfg.tokenExpiration) setTokenExpiration(cfg.tokenExpiration);
+      if (cfg.isTokenSecured !== undefined) setIsTokenSecured(cfg.isTokenSecured);
+    }
+  }, [empresaConfig]);
 
   const addLog = (msg: string) => {
     setLogs((prev) => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev.slice(0, 999)]);
@@ -1161,229 +1181,69 @@ export const InstagramSorteioModule: React.FC = () => {
           {/* Left Column: Rules & Configuration (4 Cols) */}
           <div className="lg:col-span-5 space-y-5">
             
-            {/* Meta Graph API Credentials Card */}
+            {/* Meta Graph API Status & Informational Card (Centralized in Settings Panel) */}
             <div className="bg-[#111113] border border-[#27272A] p-5 rounded-2xl space-y-4">
               <div className="flex items-center justify-between border-b border-[#27272A] pb-3">
                 <div className="flex items-center gap-2">
                   <Database size={16} className="text-[#D4AF37]" />
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono">
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider font-mono">
                     Conector de Token Meta Graph
                   </h3>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowApiConfig(!showApiConfig)}
-                  className="bg-[#18181B] hover:bg-[#27272A] text-[#D4AF37] border border-[#D4AF37]/20 px-2.5 py-1 rounded-lg text-[10px] font-bold font-mono transition-all cursor-pointer flex items-center gap-1"
-                >
-                  <Code2 size={10} />
-                  {showApiConfig ? 'RECOLHER' : 'CONFIGURAR'}
-                </button>
+                <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider font-mono">
+                  Ativo
+                </span>
               </div>
 
-              {/* Security Banner: Android EncryptedSharedPreferences (Jetpack Security) */}
-              <div className={`p-3 rounded-xl border flex flex-col gap-1.5 transition-all ${isTokenSecured ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-amber-500/5 border-amber-500/20'}`}>
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold uppercase tracking-wider font-mono text-white flex items-center gap-1.5">
-                    <ShieldCheck size={12} className={isTokenSecured ? 'text-emerald-400' : 'text-amber-400'} />
-                    Armazenamento Android Seguro
-                  </span>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      checked={isTokenSecured} 
-                      onChange={(e) => handleToggleSecureStorage(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-7 h-4 bg-[#18181B] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[#71717A] peer-checked:after:bg-[#D4AF37] after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-[#27272A]"></div>
-                  </label>
-                </div>
-                <p className="text-[10px] text-[#A1A1AA] leading-normal font-sans">
-                  {isTokenSecured ? (
-                    <span><strong>Ativado (Jetpack Security)</strong>: Token salvo com criptografia AES-256-SIV (chaves) e AES-256-GCM (valores) pelo Keystore do Android, impedindo extração física do dispositivo.</span>
-                  ) : (
-                    <span className="text-amber-400/90 font-semibold">⚠️ SharedPreferences Comum: O token está exposto no armazenamento local do Android em texto plano (Risco de Segurança de Auditoria!).</span>
-                  )}
+              {/* Centralization info banner */}
+              <div className="p-3 bg-pink-500/5 border border-pink-500/10 rounded-xl space-y-1">
+                <span className="text-[10px] font-bold text-pink-400 uppercase tracking-wider block font-mono">
+                  Configuração Centralizada
+                </span>
+                <p className="text-[10px] text-[#A1A1AA] leading-relaxed">
+                  As credenciais e tokens da Meta Graph API foram transferidos para o <strong>Painel de Configurações &gt; Aba Integrações &gt; Sub-aba Instagram</strong>.
                 </p>
               </div>
 
-              {showApiConfig ? (
-                <div className="space-y-3.5 pt-1 transition-all duration-300">
-                  {/* API Client ID & Secret */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-semibold text-[#A1A1AA] uppercase tracking-wider font-mono">App ID</label>
-                      <input
-                        type="text"
-                        value={apiClientId}
-                        onChange={(e) => setApiClientId(e.target.value)}
-                        className="w-full bg-[#18181B] border border-[#27272A] rounded-xl px-3 py-2 text-xs text-white focus:border-[#D4AF37] focus:outline-none font-mono"
-                        placeholder="Ex: 4102948..."
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-semibold text-[#A1A1AA] uppercase tracking-wider font-mono">App Secret Key</label>
-                      <input
-                        type="password"
-                        value={apiClientSecret}
-                        onChange={(e) => setApiClientSecret(e.target.value)}
-                        className="w-full bg-[#18181B] border border-[#27272A] rounded-xl px-3 py-2 text-xs text-white focus:border-[#D4AF37] focus:outline-none font-mono"
-                        placeholder="••••••••••••••••••••"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Token Type Switch & Conversion */}
-                  <div className="bg-[#18181B] border border-[#27272A] p-2.5 rounded-xl space-y-2">
-                    <div className="flex items-center justify-between">
-                      <label className="text-[10px] font-semibold text-[#A1A1AA] uppercase tracking-wider font-mono">Ciclo de Vida do Token</label>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${tokenType === 'long-lived' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'}`}>
-                        {tokenType === 'long-lived' ? 'Long-Lived (60 Dias)' : 'Short-Lived (2 Horas)'}
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTokenType('short-lived');
-                          setTokenExpiration('Expira em 2 horas');
-                          addLog('[API CONFIG] Tipo de Token alterado para Short-Lived (Token de Usuário de curta duração - 2 horas).');
-                        }}
-                        className={`py-1.5 rounded-lg text-[10px] font-bold font-mono transition-all ${tokenType === 'short-lived' ? 'bg-[#D4AF37] text-black' : 'bg-[#111113] text-[#A1A1AA] hover:bg-[#27272A] border border-[#27272A]'}`}
-                      >
-                        Curta Duração
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTokenType('long-lived');
-                          setTokenExpiration('Expira em 60 dias (02/10/2026)');
-                          addLog('[API CONFIG] Tipo de Token alterado para Long-Lived (Token de Página/Usuário estendido - 60 dias).');
-                        }}
-                        className={`py-1.5 rounded-lg text-[10px] font-bold font-mono transition-all ${tokenType === 'long-lived' ? 'bg-[#D4AF37] text-black' : 'bg-[#111113] text-[#A1A1AA] hover:bg-[#27272A] border border-[#27272A]'}`}
-                      >
-                        Longa Duração
-                      </button>
-                    </div>
-
-                    {tokenType === 'short-lived' && (
-                      <button
-                        type="button"
-                        onClick={handleConvertLongLivedToken}
-                        className="w-full mt-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white py-1.5 rounded-lg text-[10px] font-bold font-mono transition-all flex items-center justify-center gap-1 cursor-pointer shadow-md"
-                      >
-                        <RefreshCw size={10} className="animate-spin-slow" />
-                        Gerar Long-Lived Token (60 dias)
-                      </button>
-                    )}
-                  </div>
-
-                  {/* API Access Token */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <label className="text-[10px] font-semibold text-[#A1A1AA] uppercase tracking-wider font-mono">User/Page Access Token (Bearer)</label>
-                      <span className="text-[9px] text-[#71717A] font-mono">{tokenExpiration}</span>
-                    </div>
-                    <textarea
-                      value={apiAccessToken}
-                      onChange={(e) => setApiAccessToken(e.target.value)}
-                      rows={2}
-                      className="w-full bg-[#18181B] border border-[#27272A] rounded-xl px-3 py-2 text-xs text-white focus:border-[#D4AF37] focus:outline-none font-mono resize-none leading-normal"
-                      placeholder="EAAdF8aZA5b6MBO..."
-                    />
-                  </div>
-
-                  {/* API version and Business Account ID in two columns */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-semibold text-[#A1A1AA] uppercase tracking-wider font-mono">Versão API</label>
-                      <select
-                        value={apiVersion}
-                        onChange={(e) => setApiVersion(e.target.value)}
-                        className="w-full bg-[#18181B] border border-[#27272A] rounded-xl px-2.5 py-2 text-xs text-white focus:border-[#D4AF37] focus:outline-none font-mono"
-                      >
-                        <option value="v17.0">v17.0</option>
-                        <option value="v18.0">v18.0</option>
-                        <option value="v19.0">v19.0</option>
-                        <option value="v20.0">v20.0</option>
-                        <option value="v21.0">v21.0</option>
-                      </select>
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-semibold text-[#A1A1AA] uppercase tracking-wider font-mono">Business ID</label>
-                      <input
-                        type="text"
-                        value={apiBusinessId}
-                        onChange={(e) => setApiBusinessId(e.target.value)}
-                        className="w-full bg-[#18181B] border border-[#27272A] rounded-xl px-2.5 py-2 text-xs text-white focus:border-[#D4AF37] focus:outline-none font-mono"
-                        placeholder="Ex: 1784140..."
-                      />
-                    </div>
-                  </div>
-
-                  {/* Real-Time Permissions & Scopes Checklist */}
-                  <div className="bg-[#18181B]/50 border border-[#27272A] p-2.5 rounded-xl space-y-1.5 font-mono text-[10px]">
-                    <span className="text-[#A1A1AA] uppercase font-bold tracking-wider block border-b border-[#27272A] pb-1.5">
-                      ✓ Escopos Autorizados (Graph Debug)
-                    </span>
-                    <div className="grid grid-cols-2 gap-1.5 text-[9px] pt-0.5">
-                      <div className="flex items-center gap-1.5 text-white">
-                        <CheckCircle2 size={10} className={apiScopes.instagram_basic ? 'text-emerald-400' : 'text-[#71717A]'} />
-                        <span className={apiScopes.instagram_basic ? '' : 'line-through text-[#71717A]'}>instagram_basic</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-white">
-                        <CheckCircle2 size={10} className={apiScopes.instagram_manage_comments ? 'text-emerald-400' : 'text-[#71717A]'} />
-                        <span className={apiScopes.instagram_manage_comments ? '' : 'line-through text-[#71717A]'}>manage_comments</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-white">
-                        <CheckCircle2 size={10} className={apiScopes.pages_read_engagement ? 'text-emerald-400' : 'text-[#71717A]'} />
-                        <span className={apiScopes.pages_read_engagement ? '' : 'line-through text-[#71717A]'}>read_engagement</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-white">
-                        <CheckCircle2 size={10} className={apiScopes.pages_show_list ? 'text-emerald-400' : 'text-[#71717A]'} />
-                        <span className={apiScopes.pages_show_list ? '' : 'line-through text-[#71717A]'}>pages_show_list</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={handleTestApiConnection}
-                    disabled={isValidatingApi}
-                    className="w-full bg-[#18181B] hover:bg-[#27272A] text-[#D4AF37] border border-[#D4AF37]/30 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    {isValidatingApi ? (
-                      <>
-                        <div className="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
-                        <span>Verificando Token...</span>
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 size={14} />
-                        <span>Testar & Validar Token</span>
-                      </>
-                    )}
-                  </button>
+              {/* Status parameters readout */}
+              <div className="space-y-2 bg-[#18181B] p-3 rounded-xl border border-[#27272A] text-[11px] font-mono">
+                <div className="flex justify-between">
+                  <span className="text-[#71717A]">App ID:</span>
+                  <span className="text-white font-bold">{apiClientId || '410294810293810'}</span>
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between bg-[#18181B]/50 p-2.5 rounded-xl border border-[#27272A] text-xs">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                      <span className="text-white text-[11px] font-mono">Meta SDK Conectado ({apiVersion})</span>
-                    </div>
-                    <span className="text-[10px] text-[#D4AF37] font-mono font-bold uppercase">{tokenType === 'long-lived' ? 'Long-Lived' : 'Short-Lived'}</span>
-                  </div>
-                  
-                  {isTokenSecured && (
-                    <div className="flex items-center gap-1.5 bg-emerald-500/5 text-emerald-400 text-[9px] font-mono px-2 py-1 rounded border border-emerald-500/10">
-                      <ShieldCheck size={10} />
-                      <span>CRIPTOGRAFADO NO ANDROID KEYSTORE (AES-256-GCM)</span>
-                    </div>
-                  )}
+                <div className="flex justify-between">
+                  <span className="text-[#71717A]">Versão API:</span>
+                  <span className="text-white">{apiVersion || 'v19.0'}</span>
                 </div>
-              )}
+                <div className="flex justify-between">
+                  <span className="text-[#71717A]">Token:</span>
+                  <span className="text-[#D4AF37]">{tokenType === 'long-lived' ? 'Long-Lived' : 'Short-Lived'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#71717A]">Armazenamento:</span>
+                  <span className="text-emerald-400">{isTokenSecured ? 'Android Keystore AES-256' : 'Inseguro (Texto Plano)'}</span>
+                </div>
+              </div>
+
+              {/* Test Connections inside drawing view */}
+              <button
+                type="button"
+                onClick={handleTestApiConnection}
+                disabled={isValidatingApi}
+                className="w-full bg-[#18181B] hover:bg-[#27272A] text-[#D4AF37] border border-[#D4AF37]/30 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {isValidatingApi ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                    <span>Verificando Conexão Meta...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 size={14} />
+                    <span>Testar &amp; Validar Conexão</span>
+                  </>
+                )}
+              </button>
             </div>
 
             <div className="bg-[#111113] border border-[#27272A] p-5 rounded-2xl space-y-4">

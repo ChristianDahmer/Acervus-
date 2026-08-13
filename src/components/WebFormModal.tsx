@@ -62,6 +62,7 @@ interface WebFormModalProps {
   onDeleteWebForm?: (id: string) => void;
   empresaConfig?: EmpresaConfig;
   hideHeader?: boolean;
+  onNavigateToCreateOrcamento?: () => void;
 }
 
 export const WebFormModal: React.FC<WebFormModalProps> = ({
@@ -75,6 +76,7 @@ export const WebFormModal: React.FC<WebFormModalProps> = ({
   onDeleteWebForm,
   empresaConfig,
   hideHeader = false,
+  onNavigateToCreateOrcamento,
 }) => {
   const isGoogleDriveEnabled = empresaConfig?.habilitarGoogleDrive !== false;
   const isGoogleFormsEnabled = empresaConfig?.habilitarGoogleForms !== false;
@@ -150,49 +152,6 @@ export const WebFormModal: React.FC<WebFormModalProps> = ({
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
   const [copiedLocalLinkId, setCopiedLocalLinkId] = useState<string | null>(null);
 
-  // Google Drive Config Panel State
-  const [showDriveConfig, setShowDriveConfig] = useState(false);
-  const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
-  const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
-  const [customAccountEmail, setCustomAccountEmail] = useState('');
-  const [isLoggingInGoogle, setIsLoggingInGoogle] = useState(false);
-  const [driveNotice, setDriveNotice] = useState<string | null>(null);
-  const [selectedFolderPath, setSelectedFolderPath] = useState(googleAccount?.driveFolderPath || '/Bora Festar Locações/Formulários');
-  const [showCreateFolderInput, setShowCreateFolderInput] = useState(false);
-  const [newFolderName, setNewFolderName] = useState('');
-
-  const handleSelectAccount = (email: string, name: string) => {
-    if (onUpdateGoogleAccount) {
-      onUpdateGoogleAccount({
-        isConnected: true,
-        email,
-        displayName: name,
-        connectedAt: Date.now(),
-        driveFolderPath: googleAccount?.driveFolderPath || '/Bora Festar Locações/Formulários',
-      });
-    }
-    setIsAccountModalOpen(false);
-    setDriveNotice(`Conta alterada para ${email} com sucesso!`);
-    setTimeout(() => setDriveNotice(null), 3500);
-  };
-
-  const handleSaveSelectedFolder = () => {
-    const finalPath = selectedFolderPath.trim() || '/';
-    if (onUpdateGoogleAccount) {
-      onUpdateGoogleAccount({
-        isConnected: googleAccount?.isConnected ?? true,
-        email: googleAccount?.email || 'locadora.borafestar@gmail.com',
-        displayName: googleAccount?.displayName || 'Bora Festar Locações',
-        connectedAt: googleAccount?.connectedAt || Date.now(),
-        driveFolderPath: finalPath,
-      });
-    }
-    setIsFolderModalOpen(false);
-    setShowCreateFolderInput(false);
-    setDriveNotice(`Pasta de destino alterada para "${finalPath}"!`);
-    setTimeout(() => setDriveNotice(null), 3500);
-  };
-
   // WhatsApp Share Modal State
   const [isShareWhatsappModalOpen, setIsShareWhatsappModalOpen] = useState(false);
   const [sharingForm, setSharingForm] = useState<FormularioWeb | null>(null);
@@ -267,42 +226,21 @@ export const WebFormModal: React.FC<WebFormModalProps> = ({
   const [isGeneratingInDrive, setIsGeneratingInDrive] = useState(false);
   const [isSimulatorModalOpen, setIsSimulatorModalOpen] = useState(false);
 
+  const handleOpenCreateForm = () => {
+    if (onNavigateToCreateOrcamento) {
+      onNavigateToCreateOrcamento();
+      return;
+    }
+    setNewFormTitle('Orçamento de Equipamentos para Evento');
+    setNewFormPercentualCalcao(empresaConfig?.painelConfiguracao?.percentualSinalPadrao ?? 50);
+    setSelectedItemIds(itens.slice(0, 3).map((i) => i.id));
+    setIsCreateModalOpen(true);
+  };
+
   // Simulation form inputs
   const [simNome, setSimNome] = useState('Mariana Lima');
   const [simTelefone, setSimTelefone] = useState('5511999887766');
   const [simItemIds, setSimItemIds] = useState<number[]>([]);
-
-  // Google Picker Integration State & Action
-  const [selectedDriveFile, setSelectedDriveFile] = useState<{ id: string; name: string; url: string; mimeType: string } | null>(null);
-  const [pickerError, setPickerError] = useState<string | null>(null);
-  const [isLoadingPicker, setIsLoadingPicker] = useState(false);
-
-  const handleOpenGooglePicker = async () => {
-    try {
-      setPickerError(null);
-      setIsLoadingPicker(true);
-      let token = await getAccessToken();
-      if (!token) {
-        const signInResult = await googleSignIn();
-        if (signInResult) {
-          token = signInResult.accessToken;
-        }
-      }
-      if (!token) {
-        setPickerError('Conecte ao Google Drive primeiro para habilitar o Google Picker.');
-        setIsLoadingPicker(false);
-        return;
-      }
-      await showGooglePicker(token, 'all', (selectedItem) => {
-        setSelectedDriveFile(selectedItem);
-      });
-    } catch (err: any) {
-      console.error(err);
-      setPickerError('Erro ao abrir Google Picker: ' + (err.message || 'Pop-up bloqueado ou sem permissão'));
-    } finally {
-      setIsLoadingPicker(false);
-    }
-  };
 
   const handleFocusScroll = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     setTimeout(() => {
@@ -378,252 +316,23 @@ export const WebFormModal: React.FC<WebFormModalProps> = ({
 
           <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2.5 w-full lg:w-auto">
             <button
-              onClick={() => setIsCreateModalOpen(true)}
+              onClick={handleOpenCreateForm}
               className="flex items-center justify-center gap-2 bg-[#D4AF37] hover:bg-[#c4a02e] text-black px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold transition-all shadow-lg cursor-pointer w-full sm:w-auto shrink-0 whitespace-nowrap"
             >
               <Plus size={16} />
               <span>Gerar Novo Orçamento</span>
             </button>
-
-            {isGoogleDriveEnabled && (
-              <button
-                onClick={handleOpenGooglePicker}
-                disabled={isLoadingPicker}
-                className="flex items-center justify-center gap-2 bg-[#18181B] border border-[#27272A] hover:bg-[#27272A] text-white px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer w-full sm:w-auto shrink-0 whitespace-nowrap"
-              >
-                <FolderOpen size={16} className="text-[#D4AF37]" />
-                <span>{isLoadingPicker ? 'Abrindo...' : 'Abrir Google Picker'}</span>
-              </button>
-            )}
           </div>
         </div>
       ) : (
         <div className="flex flex-col sm:flex-row justify-end items-center gap-2.5">
           <button
-            onClick={() => setIsCreateModalOpen(true)}
+            onClick={handleOpenCreateForm}
             className="flex items-center justify-center gap-2 bg-[#D4AF37] hover:bg-[#c4a02e] text-black px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold transition-all shadow-lg cursor-pointer w-full sm:w-auto shrink-0 whitespace-nowrap"
           >
             <Plus size={16} />
             <span>Gerar Novo Orçamento</span>
           </button>
-
-          {isGoogleDriveEnabled && (
-            <button
-              onClick={handleOpenGooglePicker}
-              disabled={isLoadingPicker}
-              className="flex items-center justify-center gap-2 bg-[#18181B] border border-[#27272A] hover:bg-[#27272A] text-white px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer w-full sm:w-auto shrink-0 whitespace-nowrap"
-            >
-              <FolderOpen size={16} className="text-[#D4AF37]" />
-              <span>{isLoadingPicker ? 'Abrindo...' : 'Abrir Google Picker'}</span>
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Google Drive API Connector Card (Exact Instagram Sorteios Connector Pattern) */}
-      {isGoogleDriveEnabled && (
-        <div className="bg-[#111113] border border-[#27272A] p-5 rounded-2xl space-y-4 shadow-xl">
-        <div className="flex items-center justify-between border-b border-[#27272A] pb-3">
-          <div className="flex items-center gap-2">
-            <HardDrive size={16} className="text-[#D4AF37]" />
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono">
-              Conector Google Forms & Drive API
-            </h3>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowDriveConfig(!showDriveConfig)}
-            className="bg-[#18181B] hover:bg-[#27272A] text-[#D4AF37] border border-[#D4AF37]/20 px-2.5 py-1 rounded-lg text-[10px] font-bold font-mono transition-all cursor-pointer flex items-center gap-1"
-          >
-            <Code2 size={10} />
-            {showDriveConfig ? 'RECOLHER' : 'CONFIGURAR'}
-          </button>
-        </div>
-
-        {/* Security / Connection Summary Banner */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 rounded-xl border bg-[#18181B] border-[#27272A]">
-          <div className="flex items-center gap-2">
-            <div className={`w-2.5 h-2.5 rounded-full ${googleAccount?.isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-            <span className="text-xs font-mono text-white font-bold">
-              {googleAccount?.isConnected 
-                ? `Conta Conectada: ${googleAccount.email}`
-                : 'Nenhuma conta do Google conectada ao aplicativo'
-              }
-            </span>
-          </div>
-          <span className="text-[11px] text-[#A1A1AA] font-mono">
-            Pasta: <strong className="text-white">{googleAccount?.driveFolderPath || '/Bora Festar Locações/Formulários'}</strong>
-          </span>
-        </div>
-
-        {/* Expanded Configuration Panel */}
-        {showDriveConfig && (
-          <div className="pt-2 space-y-4 border-t border-[#27272A] animate-fadeIn">
-            {/* Notification Banner */}
-            {driveNotice && (
-              <div className="bg-[#D4AF37]/10 border border-[#D4AF37]/40 p-3 rounded-xl text-xs text-[#D4AF37] flex items-center gap-2 animate-fadeIn">
-                <CheckCircle2 size={16} className="shrink-0" />
-                <span>{driveNotice}</span>
-              </div>
-            )}
-
-            {/* Account & Folder Status Details */}
-            {googleAccount?.isConnected ? (
-              <div className="bg-[#18181B] border border-[#27272A] p-4.5 rounded-2xl space-y-4">
-                {/* Connected Account Info Row */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#27272A]">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] flex items-center justify-center font-bold text-sm border border-[#D4AF37]/30 shrink-0">
-                      G
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h4 className="text-white text-xs font-bold">
-                          {googleAccount.email || 'locadora.borafestar@gmail.com'}
-                        </h4>
-                        <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
-                          <CheckCircle2 size={11} /> Conta Conectada
-                        </span>
-                      </div>
-                      <p className="text-[#A1A1AA] text-[11px] mt-0.5">
-                        {googleAccount.displayName || 'Bora Festar Locações'}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Account Action Buttons */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={() => setIsAccountModalOpen(true)}
-                      className="flex items-center justify-center gap-1.5 bg-[#27272A] hover:bg-[#3F3F46] text-white border border-[#3F3F46] px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer"
-                    >
-                      <UserCheck size={14} className="text-[#D4AF37]" />
-                      <span>Alterar Conta</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onUpdateGoogleAccount &&
-                        onUpdateGoogleAccount({
-                          ...googleAccount,
-                          isConnected: false,
-                        })
-                      }
-                      className="flex items-center justify-center gap-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0"
-                    >
-                      <LogOut size={14} />
-                      <span>Desconectar</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Destination Folder Row */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#111113] p-3.5 rounded-xl border border-[#27272A]">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-xl bg-[#D4AF37]/10 text-[#D4AF37] border border-[#D4AF37]/20 shrink-0">
-                      <FolderGit2 size={16} />
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-[#A1A1AA] uppercase font-bold tracking-wider block">
-                        Pasta de Destino no Google Drive
-                      </span>
-                      <span className="text-white text-xs font-semibold font-mono mt-0.5 block">
-                        {googleAccount.driveFolderPath || '/Bora Festar Locações/Formulários'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setIsFolderModalOpen(true)}
-                    className="flex items-center justify-center gap-1.5 bg-[#18181B] hover:bg-[#27272A] text-white border border-[#3F3F46] px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer shrink-0"
-                  >
-                    <FolderPlus size={14} className="text-[#D4AF37]" />
-                    <span>Alterar Pasta</span>
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="bg-[#18181B] border border-[#27272A] p-5 rounded-2xl text-center space-y-3">
-                <div className="w-10 h-10 rounded-full bg-[#D4AF37]/10 text-[#D4AF37] mx-auto flex items-center justify-center">
-                  <HardDrive size={20} />
-                </div>
-                <div>
-                  <h4 className="text-white text-xs font-bold">Nenhuma Conta Conectada</h4>
-                  <p className="text-[#A1A1AA] text-xs max-w-md mx-auto mt-1">
-                    Conecte sua conta do Google para armazenar automaticamente formulários e contratos no Google Drive.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCustomAccountEmail(googleAccount?.email || '');
-                    setIsAccountModalOpen(true);
-                  }}
-                  className="inline-flex items-center justify-center gap-2 bg-[#D4AF37] hover:bg-[#c4a02e] text-black px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-lg cursor-pointer"
-                >
-                  <LogIn size={15} />
-                  <span>Conectar Conta do Google</span>
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-      )}
-
-      {pickerError && (
-        <div className="bg-red-500/10 border border-red-500/30 p-4 rounded-2xl text-xs text-red-400 flex items-center justify-between">
-          <span>{pickerError}</span>
-          <button onClick={() => setPickerError(null)} className="text-red-400 hover:text-white">
-            <X size={14} />
-          </button>
-        </div>
-      )}
-
-      {selectedDriveFile && (
-        <div className="bg-[#D4AF37]/5 border border-[#D4AF37]/30 p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-xl border-dashed">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#D4AF37]/10 border border-[#D4AF37]/30 flex items-center justify-center text-[#D4AF37]">
-              <File size={20} />
-            </div>
-            <div>
-              <span className="text-[10px] font-bold text-[#D4AF37] uppercase tracking-wider block">Arquivo Selecionado do Google Drive</span>
-              <span className="text-white font-serif italic text-sm font-semibold">{selectedDriveFile.name}</span>
-              {localStorage.getItem('modo_desenvolvedor') === 'true' && (
-                <span className="text-[11px] text-[#A1A1AA] block font-mono mt-0.5">MimeType: {selectedDriveFile.mimeType} • ID: {selectedDriveFile.id}</span>
-              )}
-            </div>
-          </div>
-          <div className="flex gap-2 w-full sm:w-auto">
-            <a
-              href={selectedDriveFile.url}
-              target="_blank"
-              rel="noreferrer"
-              className="flex-1 sm:flex-initial px-4 py-2 bg-[#18181B] border border-[#27272A] hover:bg-[#27272A] text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all"
-            >
-              <ExternalLink size={14} />
-              <span>Visualizar</span>
-            </a>
-            <button
-              onClick={() => {
-                navigator.clipboard.writeText(selectedDriveFile.url);
-                alert('URL copiada para a área de transferência!');
-              }}
-              className="flex-1 sm:flex-initial px-4 py-2 bg-[#D4AF37] text-black text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-            >
-              <Copy size={14} />
-              <span>Copiar Link</span>
-            </button>
-            <button
-              onClick={() => setSelectedDriveFile(null)}
-              className="p-2 bg-[#18181B] border border-[#27272A] text-[#71717A] hover:text-white rounded-xl transition-all cursor-pointer"
-            >
-              <X size={14} />
-            </button>
-          </div>
         </div>
       )}
 
@@ -771,29 +480,6 @@ export const WebFormModal: React.FC<WebFormModalProps> = ({
                     <span className="text-[11px] text-[#71717A]">Código: #{form.id}</span>
 
                     <div className="flex items-center gap-2.5">
-                      <a
-                        href={formUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="text-xs text-[#71717A] hover:text-[#D4AF37] flex items-center gap-1 transition-colors"
-                      >
-                        <ExternalLink size={12} />
-                        <span>Form</span>
-                      </a>
-
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCopyLink(form);
-                        }}
-                        className="text-xs text-[#71717A] hover:text-[#D4AF37] flex items-center gap-1 cursor-pointer transition-colors"
-                      >
-                        {copiedLinkId === form.id ? <Check size={12} /> : <Copy size={12} />}
-                        <span>{copiedLinkId === form.id ? 'Copiado' : 'Copiar URL'}</span>
-                      </button>
-
                       <button
                         type="button"
                         onClick={(e) => {
@@ -1256,199 +942,6 @@ export const WebFormModal: React.FC<WebFormModalProps> = ({
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* GOOGLE ACCOUNT SWITCHER MODAL */}
-      {isGoogleDriveEnabled && isAccountModalOpen && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-[#18181B] border border-[#27272A] w-full max-w-md rounded-2xl p-6 space-y-5 shadow-2xl relative">
-            <button
-              onClick={() => setIsAccountModalOpen(false)}
-              className="absolute top-4 right-4 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer"
-            >
-              <X size={18} />
-            </button>
-
-            <div className="flex items-center gap-3 border-b border-[#27272A] pb-4">
-              <div className="w-10 h-10 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] flex items-center justify-center font-bold text-sm border border-[#D4AF37]/30 shrink-0">
-                G
-              </div>
-              <div>
-                <h3 className="text-white text-sm font-bold">Vincular Conta do Google Drive</h3>
-                <p className="text-[#A1A1AA] text-xs">
-                  Conecte sua conta de forma segura para usar o Google Picker e salvar formulários.
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              {/* Opção 1: Login OAuth Real (Recomendado) */}
-              <div className="bg-[#111113] p-4 rounded-xl border border-emerald-500/10 space-y-3">
-                <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">Conexão Segura Oficial</span>
-                <p className="text-[11px] text-[#A1A1AA] leading-relaxed">
-                  Recomendado para autorizar o acesso direto ao seu Google Drive, permitindo o uso do Google Picker de arquivos e pastas.
-                </p>
-                <button
-                  type="button"
-                  disabled={isLoggingInGoogle}
-                  onClick={async () => {
-                    try {
-                      setIsLoggingInGoogle(true);
-                      console.log('[WebFormModal] Starting Google OAuth login popup flow...');
-                      const result = await googleSignIn();
-                      if (result && result.user) {
-                        console.log('[WebFormModal] Google Sign-in successful! User:', result.user.email);
-                        handleSelectAccount(result.user.email || 'conta.google@gmail.com', result.user.displayName || 'Usuário Google');
-                      }
-                    } catch (err: any) {
-                      console.error('[WebFormModal] Google Auth popup error:', err);
-                      alert('Não foi possível conectar com o Google: ' + (err.message || 'Pop-up bloqueado ou erro de rede.'));
-                    } finally {
-                      setIsLoggingInGoogle(false);
-                    }
-                  }}
-                  className="w-full flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white p-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
-                >
-                  <LogIn size={15} />
-                  <span>{isLoggingInGoogle ? 'Conectando...' : 'Fazer Login Real com Google'}</span>
-                </button>
-              </div>
-
-              {/* Divisor Visual */}
-              <div className="relative flex py-1 items-center">
-                <div className="flex-grow border-t border-[#27272A]"></div>
-                <span className="flex-shrink mx-3 text-[#71717A] text-[10px] font-bold uppercase tracking-wider">ou simular conta</span>
-                <div className="flex-grow border-t border-[#27272A]"></div>
-              </div>
-
-              {/* Opção 2: Simulação Manual (Para testes sem popup) */}
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-[11px] font-semibold text-[#A1A1AA] mb-1.5">
-                    E-mail da Conta para Simulação
-                  </label>
-                  <input
-                    type="email"
-                    placeholder="ex: suaempresa@gmail.com"
-                    value={customAccountEmail}
-                    onChange={(e) => setCustomAccountEmail(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-[#111113] border border-[#27272A] rounded-xl text-xs text-white focus:border-[#D4AF37] focus:outline-none placeholder-[#71717A]"
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (customAccountEmail.trim() && customAccountEmail.includes('@')) {
-                      const email = customAccountEmail.trim();
-                      const prefix = email.split('@')[0];
-                      const displayName = prefix
-                        .split('.')
-                        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-                        .join(' ');
-                      
-                      handleSelectAccount(email, displayName);
-                    } else {
-                      alert('Por favor, informe um e-mail válido para a simulação.');
-                    }
-                  }}
-                  className="w-full flex items-center justify-center gap-2 bg-[#27272A] hover:bg-[#3F3F46] text-white p-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer border border-[#3F3F46]"
-                >
-                  <span>Vincular Manualmente (Simulado)</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* GOOGLE DRIVE FOLDER SELECTOR MODAL */}
-      {isGoogleDriveEnabled && isFolderModalOpen && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-[#18181B] border border-[#27272A] w-full max-w-lg rounded-2xl p-6 space-y-5 shadow-2xl relative flex flex-col max-h-[90vh]">
-            <button
-              onClick={() => setIsFolderModalOpen(false)}
-              className="absolute top-4 right-4 text-[#A1A1AA] hover:text-white transition-colors cursor-pointer"
-            >
-              <X size={18} />
-            </button>
-
-            <div className="flex items-center gap-3 border-b border-[#27272A] pb-4 shrink-0">
-              <div className="w-10 h-10 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] flex items-center justify-center font-bold text-sm border border-[#D4AF37]/30 shrink-0">
-                <FolderGit2 size={18} />
-              </div>
-              <div>
-                <h3 className="text-white text-sm font-bold">Pasta do Google Drive para Formulários</h3>
-                <p className="text-[#A1A1AA] text-xs">
-                  Insira o caminho de pasta de destino ou escolha entre as opções predefinidas.
-                </p>
-              </div>
-            </div>
-
-            {/* Quick Preset Options */}
-            <div className="space-y-2 shrink-0">
-              <label className="text-xs font-bold text-white block">Atalhos de Pastas Recomendadas:</label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {[
-                  '/Bora Festar Locações/Formulários',
-                  '/Meu Drive/Orçamentos Clientes',
-                  '/Google Forms/Eventos e Locações',
-                  '/Atendimento WhatsApp/Formulários',
-                ].map((path) => (
-                  <button
-                    key={path}
-                    type="button"
-                    onClick={() => setSelectedFolderPath(path)}
-                    className={`p-2.5 rounded-xl border text-left transition-all text-xs font-mono flex items-center gap-2 cursor-pointer ${
-                      selectedFolderPath === path
-                        ? 'bg-[#D4AF37]/10 border-[#D4AF37] text-white font-bold'
-                        : 'bg-[#111113] border-[#27272A] text-[#A1A1AA] hover:border-[#3F3F46]'
-                    }`}
-                  >
-                    <FolderOpen size={14} className={selectedFolderPath === path ? 'text-[#D4AF37]' : 'text-[#71717A]'} />
-                    <span className="truncate">{path}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Path Text Input */}
-            <div className="space-y-2 shrink-0">
-              <div className="flex justify-between items-center">
-                <label className="text-xs font-bold text-white block">
-                  Caminho do Diretório Destino:
-                </label>
-                <span className="text-[10px] text-[#A1A1AA]">Digite livremente o caminho</span>
-              </div>
-              <input
-                type="text"
-                value={selectedFolderPath}
-                onChange={(e) => setSelectedFolderPath(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-[#111113] border border-[#27272A] rounded-xl text-xs text-white focus:border-[#D4AF37] focus:outline-none placeholder-[#71717A] font-mono tracking-wide shadow-inner"
-                placeholder="Ex: /Bora Festar Locações/Formulários"
-              />
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex items-center gap-3 pt-3 border-t border-[#27272A] shrink-0">
-              <button
-                type="button"
-                onClick={() => setIsFolderModalOpen(false)}
-                className="flex-1 bg-[#111113] hover:bg-[#27272A] text-[#A1A1AA] hover:text-white border border-[#27272A] py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer text-center"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveSelectedFolder}
-                className="flex-1 bg-[#D4AF37] hover:bg-[#E5C158] text-black py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#D4AF37]/10"
-              >
-                <CheckCircle2 size={15} />
-                <span>Confirmar Pasta</span>
-              </button>
-            </div>
           </div>
         </div>
       )}

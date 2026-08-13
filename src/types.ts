@@ -65,6 +65,10 @@ export interface Reserva {
   dataAssinatura?: number;
   percentualCalcao?: number; // Percentual do calção para garantia da reserva (ex: 30%)
   valorCalcao?: number; // Valor em R$ do calção calculado
+  nfseEmitida?: boolean;
+  nfseChaveAcesso?: string;
+  nfseProtocolo?: string;
+  nfseDataEmissao?: number;
 }
 
 export interface ReservaComItens {
@@ -150,6 +154,30 @@ export interface GovBrConfig {
   enabled: boolean;
 }
 
+export interface NfseGovBrConfig {
+  cnpjEmitente: string;
+  inscricaoMunicipal: string;
+  regimeTributario: 'simples_nacional' | 'mei' | 'lucro_presumido' | 'lucro_real';
+  ambienteEmissao: 'homologacao' | 'producao';
+  certificadoSenhaA1: string;
+  certificadoNomeA1: string;
+  certificadoCarregadoA1?: boolean;
+  aliquotaIssPadrao?: number;
+  codigoServicoPadrao?: string;
+  enabled: boolean;
+}
+
+export interface InstagramConfig {
+  apiClientId?: string;
+  apiClientSecret?: string;
+  apiAccessToken?: string;
+  apiVersion?: string;
+  apiBusinessId?: string;
+  tokenType?: 'short-lived' | 'long-lived';
+  tokenExpiration?: string;
+  isTokenSecured?: boolean;
+}
+
 export interface AssinaturaGovBrData {
   signerName: string;
   signerCpf: string;
@@ -199,22 +227,28 @@ export interface EmpresaConfig {
   enderecoCompleto: string;
   telefoneWhatsapp: string;
   nomeRepresentante: string;
+  representantesAdicionais?: string[];
   logoUrl?: string;
   linkMapaLocalizacao?: string;
   email?: string;
   senhaAcesso?: string;
   emailConfirmationSeed?: string;
   isEmailVerified?: boolean;
+  ambienteSistema?: 'teste' | 'producao';
   listVisibility?: ListVisibilityConfig;
   whatsappTemplates?: WhatsAppTemplatesConfig;
   whatsappApiToken?: string;
   whatsappApiEndpoint?: string;
   whatsappPhoneNumberId?: string;
   govBrConfig?: GovBrConfig;
+  nfseGovBrConfig?: NfseGovBrConfig;
+  instagramConfig?: InstagramConfig;
   tabDisplay?: TabDisplayConfig;
   painelConfiguracao?: PainelConfiguracaoData;
   habilitarGoogleDrive?: boolean;
   habilitarGoogleForms?: boolean;
+  backupAutoDriveEnabled?: boolean;
+  googleAccount?: GoogleAccountConfig;
   pixTipoChave?: 'CNPJ' | 'CPF' | 'E-MAIL' | 'TELEFONE' | 'CHAVE_ALEATORIA';
   pixChave?: string;
   bancoNome?: string;
@@ -265,6 +299,8 @@ export interface DispositivoAutorizado {
   telefone: string; // Telefone celular / WhatsApp
   imei?: string; // IMEI Hardware / UUID do Aparelho
   status: 'PENDENTE' | 'APROVADO' | 'REJEITADO' | 'REVOGADO';
+  isTerminalBlocked?: boolean; // Bloqueio específico do hardware/terminal
+  isUserBlocked?: boolean; // Bloqueio específico do usuário (encerra sessão)
   dataSolicitacao: number; // timestamp ms
   dataAtualizacao: number; // timestamp ms
   ultimoAcesso?: number; // timestamp ms

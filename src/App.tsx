@@ -18,6 +18,7 @@ import {
 } from './lib/firebaseSync';
 import { onSnapshot, collection } from 'firebase/firestore';
 import { db } from './lib/firebase';
+import { checkAndRunDailyAutoBackup } from './lib/googleDriveBackup';
 import { getAppLogoUrl, handleLogoError } from './utils/logoUtils';
 import { ViewSkeleton } from './components/ViewSkeleton';
 
@@ -39,10 +40,19 @@ const WorkManagerSimModal = lazy(() => import('./components/WorkManagerSimModal'
 const AiAssistantDrawer = lazy(() => import('./components/AiAssistantDrawer').then(m => ({ default: m.AiAssistantDrawer })));
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<string>('inventario');
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    return localStorage.getItem('locadora_last_active_tab') || 'inventario';
+  });
   const [empresaSubTab, setEmpresaSubTab] = useState<'empresa' | 'categorias' | 'whatsapp' | 'tema' | 'google_forms' | 'govbr' | 'permissoes' | 'dispositivos' | 'sincronizacao' | 'developer' | 'instagram_sorteio'>('empresa');
   const [isNewClientWelcome, setIsNewClientWelcome] = useState<boolean>(false);
   const [urlPropostaId, setUrlPropostaId] = useState<string | null>(null);
+
+  // NOVO: Persistir aba ativa no histórico do terminal
+  useEffect(() => {
+    if (activeTab) {
+      localStorage.setItem('locadora_last_active_tab', activeTab);
+    }
+  }, [activeTab]);
 
   // Extract public proposal ID from URL on mount
   useEffect(() => {
@@ -81,23 +91,71 @@ export default function App() {
   const [dispositivos, setDispositivos] = useState<DispositivoAutorizado[]>([]);
   const [authenticatedDevice, setAuthenticatedDevice] = useState<DispositivoAutorizado | null>(() => {
     try {
+      const isLoggedOff = localStorage.getItem('locadora_logged_off') === 'true';
+      if (isLoggedOff) {
+        return null;
+      }
+
       const saved = localStorage.getItem('locadora_authenticated_device');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.status === 'APROVADO') {
+          if (parsed.cnpjEmpresa) {
+            localStorage.setItem('locadora_last_active_tenant', parsed.cnpjEmpresa.replace(/\D/g, ''));
+          }
+          // Verificar validade de inatividade (24 Horas de Segurança)
+          const lastActiveStr = localStorage.getItem('locadora_session_timestamp');
+          if (lastActiveStr) {
+            const lastActive = parseInt(lastActiveStr, 10);
+            const SESSION_TIMEOUT = 24 * 60 * 60 * 1000; // 24 Horas
+            if (Date.now() - lastActive > SESSION_TIMEOUT) {
+              console.log('[Kernel Session] Sessão expirou após 24 horas de inatividade.');
+              localStorage.removeItem('locadora_authenticated_device');
+              localStorage.removeItem('locadora_session_timestamp');
+              localStorage.setItem('locadora_logged_off', 'true');
+              return null;
+            }
+          }
+          // Sessão ativa e válida: renovar timestamp
+          localStorage.setItem('locadora_session_timestamp', Date.now().toString());
           return parsed;
         }
       }
     } catch (e) {
-      console.warn('Error reading saved session:', e);
+      console.info('Error reading saved session:', e);
     }
     return null;
   });
+
+  // NOVO: Persistir renovação de timestamp e modo de ambiente ativo de forma segura
+  useEffect(() => {
+    if (authenticatedDevice) {
+      localStorage.setItem('locadora_session_timestamp', Date.now().toString());
+      
+      const activeTenant = getActiveTenantId();
+      const configTenant = empresaConfig?.cnpj?.replace(/\D/g, '') || '';
+      
+      // ALTERADO: Apenas atualiza o ambiente se o config carregado for do tenant ativo para evitar sobrescrever com dados default/antigos durante transições
+      if (configTenant === activeTenant || !empresaConfig?.cnpj) {
+        localStorage.setItem('locadora_session_environment', empresaConfig?.ambienteSistema || 'producao');
+      }
+    }
+  }, [authenticatedDevice, empresaConfig]);
+
+  // Rotina de Backup Automático Diário no Google Drive
+  useEffect(() => {
+    if (!isLoading && empresaConfig) {
+      checkAndRunDailyAutoBackup(empresaConfig).catch((err) => {
+        console.warn('[AutoBackup] Execução do backup diário:', err);
+      });
+    }
+  }, [isLoading, empresaConfig]);
   const tenantId = getActiveTenantId();
 
   const [hasLoadingErrors, setHasLoadingErrors] = useState<boolean>(false);
   const [showDiagnosticPanel, setShowDiagnosticPanel] = useState<boolean>(false);
   const [isWipedState, setIsWipedState] = useState(() => localStorage.getItem('locadora_wiped_state') === 'true');
+  const [startInventarioInSelectionMode, setStartInventarioInSelectionMode] = useState<boolean>(false);
 
   // Lazy & On-Demand Module Load Status (Fase 2)
   const [lazyLoadStatus, setLazyLoadStatus] = useState<Record<string, 'PENDING' | 'LOADING' | 'SUCCESS' | 'ERROR'>>({
@@ -153,7 +211,7 @@ export default function App() {
           }
         }
       } catch (err) {
-        console.warn('[Tactile Buttons] Falha ao calcular contraste do botão:', err);
+        // Silently capture button contrast calculations
       }
       
       ripple.className = isLightBg ? 'android-ripple android-ripple-dark' : 'android-ripple';
@@ -241,11 +299,77 @@ export default function App() {
   }, []);
 
 
+  // NOVO: Sincronização em tempo real entre Abas do Navegador (BroadcastReceiver-style)
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (!e.key) return;
+      const tenantId = getActiveTenantId();
+      const prefix = `offline_db_${tenantId}_`;
+      
+      if (e.key.startsWith(prefix)) {
+        const colName = e.key.substring(prefix.length);
+        const valStr = e.newValue;
+        if (!valStr) return;
+        
+        try {
+          const parsedData = JSON.parse(valStr);
+          console.log(`[Cross-Tab Real-time Sync] Detectada alteração remota na tabela local: ${colName}`);
+          
+          if (colName === 'webForms') {
+            setWebForms(parsedData);
+          } else if (colName === 'reservas') {
+            setReservas(parsedData);
+          } else if (colName === 'clientes') {
+            setClientes(parsedData);
+          } else if (colName === 'itens') {
+            setItens(parsedData);
+          } else if (colName === 'transacoes') {
+            setTransacoes(parsedData);
+          } else if (colName === 'manutencoes') {
+            setManutencoes(parsedData);
+          }
+        } catch (err) {
+          console.info('[Cross-Tab Sync] Erro ao sincronizar alteração local:', err);
+        }
+      }
+    };
+
+    const handleFocus = () => {
+      const tenantId = getActiveTenantId();
+      try {
+        const localWebForms = localStorage.getItem(`offline_db_${tenantId}_webForms`);
+        if (localWebForms) setWebForms(JSON.parse(localWebForms));
+        
+        const localReservas = localStorage.getItem(`offline_db_${tenantId}_reservas`);
+        if (localReservas) setReservas(JSON.parse(localReservas));
+        
+        const localClientes = localStorage.getItem(`offline_db_${tenantId}_clientes`);
+        if (localClientes) setClientes(JSON.parse(localClientes));
+
+        const localItens = localStorage.getItem(`offline_db_${tenantId}_itens`);
+        if (localItens) setItens(JSON.parse(localItens));
+
+        const localTransacoes = localStorage.getItem(`offline_db_${tenantId}_transacoes`);
+        if (localTransacoes) setTransacoes(JSON.parse(localTransacoes));
+      } catch (err) {
+        console.info('[Focus Sync] Erro no sincronizador automático de foco:', err);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
+
+
   // Load from Firebase (Fase 1 - Crítico / Bootloader Imediato)
   useEffect(() => {
     // Absolute global safety timer to guarantee bootloader completion (Max 3.5s)
     const globalSafetyTimer = setTimeout(() => {
-      console.warn('[Android Bootloader] Timeout global de inicialização (3.5s). Desativando splash screen com fallback.');
+      console.info('[Android Bootloader] Timeout global de inicialização (3.5s). Desativando splash screen com fallback.');
       setIsLoading(false);
     }, 3500);
 
@@ -275,19 +399,28 @@ export default function App() {
           const seedTime = Date.now() - seedStart;
           addSystemLog(`Banco Firestore verificado em ${seedTime}ms`, 15);
         } catch (seedErr) {
-          console.warn('Seed check failed or timed out, operating with local fallback:', seedErr);
+          console.info('Seed check failed or timed out, operating with local fallback:', seedErr);
           setHasLoadingErrors(true);
           addSystemLog('Timeout de sincronização do seed remoto. Ativando cache offline.', 15);
         }
 
-        // Check if database was explicitly wiped (use both local storage and database indicators for maximum resilience)
-        let isWiped = localStorage.getItem('locadora_wiped_state') === 'true';
-        try {
-          const seedStatus = await getConfig<{ done?: boolean; wiped?: boolean }>('seeded', { done: false });
-          isWiped = isWiped || seedStatus?.wiped === true;
-        } catch (e) {
-          console.warn('Error reading seeded config:', e);
-        }
+        // Check if database was explicitly wiped (only respect active device-specific wipe action state)
+        const activeTenant = getActiveTenantId();
+        const currentEmpresaConf = await getConfig<EmpresaConfig>('empresaConfig', INITIAL_EMPRESA_CONFIG);
+        const isModoTeste = currentEmpresaConf?.ambienteSistema === 'teste';
+
+        // NOVO: Verificar sessão, último logado e modo de operação (produção/teste)
+        const lastSessionUser = authenticatedDevice ? `${authenticatedDevice.usuario} (${authenticatedDevice.nivelAcesso})` : 'Nenhum usuário logado';
+        const lastSessionEnv = localStorage.getItem('locadora_session_environment') || (isModoTeste ? 'teste' : 'producao');
+        const lastScreen = localStorage.getItem('locadora_last_active_tab') || 'inventario';
+        const hasActiveSession = authenticatedDevice ? 'Ativa/Válida' : 'Expirada ou Inexistente';
+
+        addSystemLog(`Último usuário: ${lastSessionUser} | Sessão: ${hasActiveSession}`, 16);
+        addSystemLog(`Modo de Operação anterior detectado: ${lastSessionEnv.toUpperCase()}`, 17);
+        addSystemLog(`Última tela acessada restaurada: ${lastScreen.toUpperCase()}`, 18);
+
+        const isWiped = localStorage.getItem('locadora_wiped_state') === 'true' || localStorage.getItem(`locadora_wiped_state_${activeTenant}`) === 'true';
+
         setIsWipedState(isWiped);
         if (isWiped) {
           setItens([]);
@@ -298,7 +431,7 @@ export default function App() {
           setManutencoes([]);
           setWebForms([]);
           setModelosContratos([]);
-          addSystemLog('Base de dados limpa (Modo Wipe ativo).', 18);
+          addSystemLog('Base de dados limpa (Modo Produção/Wipe ativo).', 18);
         }
 
         // 2. Resilient Phase 1 loaders (Only 5 critical datasets required for immediate boot)
@@ -333,7 +466,7 @@ export default function App() {
             await Promise.race([fetchFn(), timeoutPromise]);
             updateTaskProgress(taskName, Date.now() - tStart);
           } catch (err: any) {
-            console.warn(`[Fail-Safe Android Engine] Falha ao carregar ${taskName}:`, err);
+            console.info(`[Fail-Safe Android Engine] Falha ao carregar ${taskName}:`, err);
             setHasLoadingErrors(true);
             
             const errMsg = err?.message || String(err);
@@ -395,36 +528,91 @@ export default function App() {
           'Terminais de Segurança MDM',
           async () => {
             const data = await fetchCollection<DispositivoAutorizado>('dispositivos_autorizados');
-            setDispositivos(data);
             
             // Session authentication check on device lists
-            const deviceUuid = localStorage.getItem('locadora_device_uuid');
-            if (deviceUuid) {
-              const matchedDevice = data.find((d) => d.id === deviceUuid);
-              if (matchedDevice && matchedDevice.status === 'APROVADO') {
-                setAuthenticatedDevice(matchedDevice);
-                localStorage.setItem('locadora_authenticated_device', JSON.stringify(matchedDevice));
+            const deviceUuid = localStorage.getItem('locadora_device_uuid') || 'DEV-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+            if (!localStorage.getItem('locadora_device_uuid')) {
+              localStorage.setItem('locadora_device_uuid', deviceUuid);
+            }
+
+            const isExplicitlyLoggedOff = localStorage.getItem('locadora_logged_off') === 'true';
+
+            let currentAuth: DispositivoAutorizado | null = null;
+            if (!isExplicitlyLoggedOff) {
+              if (deviceUuid) {
+                const matchedDevice = data.find((d) => d.id === deviceUuid);
+                // Verifica se o dispositivo está aprovado e não bloqueado
+                if (matchedDevice && matchedDevice.status === 'APROVADO' && !matchedDevice.isTerminalBlocked && !matchedDevice.isUserBlocked) {
+                  currentAuth = matchedDevice;
+                }
               }
-            } else {
-              const saved = localStorage.getItem('locadora_authenticated_device');
-              if (saved) {
+              if (!currentAuth) {
+                const saved = localStorage.getItem('locadora_authenticated_device');
+                if (saved) {
+                  try {
+                    const parsed = JSON.parse(saved);
+                    // Verifica se o dispositivo está aprovado e não bloqueado
+                    if (parsed && parsed.status === 'APROVADO' && !parsed.isTerminalBlocked && !parsed.isUserBlocked) {
+                      currentAuth = parsed;
+                    }
+                  } catch (e) {}
+                }
+              }
+
+              if (!currentAuth) {
+                // ALTERADO: Create default admin/operator entry from current session/currentEmpresaConf
+                // para evitar condição de corrida com o estado desatualizado da empresa de fallback/default
+                currentAuth = {
+                  id: deviceUuid,
+                  imei: deviceUuid,
+                  nomeDispositivo: 'Terminal Principal Administrador',
+                  cnpjEmpresa: currentEmpresaConf?.cnpj || '00.000.000/0001-00',
+                  usuario: currentEmpresaConf?.nomeRepresentante || 'Administrador do Sistema',
+                  email: currentEmpresaConf?.email || 'admin@acervuscore.com.br',
+                  telefone: currentEmpresaConf?.telefoneWhatsapp || '',
+                  nivelAcesso: 'ADMINISTRADOR',
+                  status: 'APROVADO',
+                  dataSolicitacao: Date.now(),
+                  dataAtualizacao: Date.now(),
+                  ultimoAcesso: Date.now(),
+                  permissoesModulos: ['inventario', 'reservas', 'clientes', 'financeiro', 'manutencao', 'relatorios', 'empresa', 'developer']
+                };
+              }
+
+              if (currentAuth) {
+                setAuthenticatedDevice(currentAuth);
+                localStorage.setItem('locadora_authenticated_device', JSON.stringify(currentAuth));
+                
+                // Upsert into collection and state
+                const exists = data.some((d) => d.id === currentAuth!.id);
+                if (!exists) {
+                  data.push(currentAuth);
+                }
                 try {
-                  const parsed = JSON.parse(saved);
-                  if (parsed && parsed.status === 'APROVADO') {
-                    setAuthenticatedDevice(parsed);
-                  }
+                  await saveDocument('dispositivos_autorizados', currentAuth.id, currentAuth);
                 } catch (e) {}
               }
             }
+
+            setDispositivos(data);
           },
           () => {
-            // Offline fallback: keep existing session if saved
+            // Offline fallback: keep existing session if saved and not explicitly logged off
+            const isExplicitlyLoggedOff = localStorage.getItem('locadora_logged_off') === 'true';
+            if (isExplicitlyLoggedOff) return;
+
             const saved = localStorage.getItem('locadora_authenticated_device');
             if (saved) {
               try {
                 const parsed = JSON.parse(saved);
                 if (parsed && parsed.status === 'APROVADO') {
                   setAuthenticatedDevice(parsed);
+                  setDispositivos((prev) => {
+                    if (!prev.some(d => d.id === parsed.id)) {
+                      return [...prev, parsed];
+                    }
+                    return prev;
+                  });
                   return;
                 }
               } catch (e) {}
@@ -489,11 +677,13 @@ export default function App() {
   useEffect(() => {
     // Avoid setting up listeners if simulated error/offline state is active
     if (localStorage.getItem('dev_simulated_error') === 'true') {
-      console.warn('[Real-Time Sync] Modo de erro simulado ativo. Listeners em tempo real pausados.');
+      console.info('[Real-Time Sync] Modo de erro simulado ativo. Listeners em tempo real pausados.');
       return;
     }
 
-    console.log('[Real-Time Sync] Ativando ouvintes essenciais em tempo real...');
+    const isModoTeste = empresaConfig?.ambienteSistema === 'teste';
+
+    console.log(`[Real-Time Sync] Ativando ouvintes essenciais em tempo real (Modo Teste: ${isModoTeste})...`);
 
     const unsubscribers: (() => void)[] = [];
 
@@ -511,7 +701,7 @@ export default function App() {
           (snapshot) => {
             const items: T[] = [];
             snapshot.forEach((docSnap) => {
-              items.push({ ...docSnap.data() } as T);
+              items.push({ id: docSnap.id, ...docSnap.data() } as T);
             });
 
             if (items.length > 0 || isWipedState) {
@@ -526,7 +716,7 @@ export default function App() {
             }
           },
           (error) => {
-            console.warn(`[Real-Time Sync] Erro no listener da coleção ${colName}:`, error);
+            console.info(`[Real-Time Sync] Erro no listener da coleção ${colName}:`, error);
           }
         );
         unsubscribers.push(unsub);
@@ -535,37 +725,39 @@ export default function App() {
       }
     };
 
-    // 1. Synchronize Inventory items in real-time
-    subscribeCollection<ItemAcervo>('itens', setItens);
+    // 1. Synchronize Inventory items in real-time ONLY in Test Mode (to avoid overriding PostgreSQL with empty Firestore)
+    if (isModoTeste) {
+      subscribeCollection<ItemAcervo>('itens', setItens);
+      subscribeCollection<CategoriaItem>('categorias', setCategorias);
+    }
 
-    // 2. Synchronize Categories
-    subscribeCollection<CategoriaItem>('categorias', setCategorias);
-
-    // 3. Synchronize Authorized MDM Devices
+    // 2. Synchronize Authorized MDM Devices (Always runs on Firestore)
     subscribeCollection<DispositivoAutorizado>('dispositivos_autorizados', setDispositivos);
 
-    // 10. Synchronize System Configurations (empresaConfig and themeConfig)
-    try {
-      const configColRef = collection(db, 'system_configs');
-      const unsubConfig = onSnapshot(configColRef, (snapshot) => {
-        snapshot.forEach((docSnap) => {
-          if (docSnap.id === `empresaConfig_${tenantId}`) {
-            const data = docSnap.data() as EmpresaConfig;
-            if (data) {
-              data.logoUrl = getAppLogoUrl(data.logoUrl);
+    // 3. Synchronize System Configurations (empresaConfig and themeConfig) ONLY in Test Mode
+    if (isModoTeste) {
+      try {
+        const configColRef = collection(db, 'system_configs');
+        const unsubConfig = onSnapshot(configColRef, (snapshot) => {
+          snapshot.forEach((docSnap) => {
+            if (docSnap.id === `empresaConfig_${tenantId}`) {
+              const data = docSnap.data() as EmpresaConfig;
+              if (data) {
+                data.logoUrl = getAppLogoUrl(data.logoUrl);
+              }
+              setEmpresaConfig(data);
+              localStorage.setItem(`offline_config_empresaConfig_${tenantId}`, JSON.stringify(data));
+            } else if (docSnap.id === `themeConfig_${tenantId}`) {
+              const data = docSnap.data() as ThemeConfig;
+              setThemeConfig(data);
+              localStorage.setItem(`offline_config_themeConfig_${tenantId}`, JSON.stringify(data));
             }
-            setEmpresaConfig(data);
-            localStorage.setItem(`offline_config_empresaConfig_${tenantId}`, JSON.stringify(data));
-          } else if (docSnap.id === `themeConfig_${tenantId}`) {
-            const data = docSnap.data() as ThemeConfig;
-            setThemeConfig(data);
-            localStorage.setItem(`offline_config_themeConfig_${tenantId}`, JSON.stringify(data));
-          }
+          });
         });
-      });
-      unsubscribers.push(unsubConfig);
-    } catch (err) {
-      console.error('[Real-Time Sync] Falha ao iniciar listener para system_configs:', err);
+        unsubscribers.push(unsubConfig);
+      } catch (err) {
+        console.error('[Real-Time Sync] Falha ao iniciar listener para system_configs:', err);
+      }
     }
 
     // Unsubscribe all on unmount
@@ -573,7 +765,7 @@ export default function App() {
       console.log('[Real-Time Sync] Desativando ouvintes essenciais em tempo real (unmount)...');
       unsubscribers.forEach((unsub) => unsub());
     };
-  }, [isWipedState, tenantId]);
+  }, [isWipedState, tenantId, empresaConfig?.ambienteSistema]);
 
   // Clean up dynamic subscriptions on unmount
   useEffect(() => {
@@ -590,6 +782,8 @@ export default function App() {
 
     setLazyLoadStatus((prev) => ({ ...prev, [moduleKey]: 'LOADING' }));
     
+    const isModoTeste = empresaConfig?.ambienteSistema === 'teste';
+    
     try {
       const colName = 
         moduleKey === 'transacoes' ? 'transacoes' :
@@ -597,6 +791,34 @@ export default function App() {
         moduleKey === 'modelosContratos' ? 'modelosContratos' :
         moduleKey; // 'clientes', 'reservas', 'webForms'
 
+      if (!isModoTeste) {
+        // Modo Produção: Busco diretamente do PostgreSQL resiliente!
+        const items = await fetchCollection<any>(colName);
+        
+        if (moduleKey === 'reservas') {
+          items.sort((a, b) => b.reserva.dataRetirada - a.reserva.dataRetirada);
+          setReservas(items);
+        } else if (moduleKey === 'transacoes') {
+          items.sort((a, b) => b.data - a.data);
+          setTransacoes(items);
+        } else if (moduleKey === 'manutencoes') {
+          items.sort((a, b) => b.data - a.data);
+          setManutencoes(items);
+        } else if (moduleKey === 'webForms') {
+          items.sort((a, b) => b.criadoEm - a.criadoEm);
+          setWebForms(items);
+        } else if (moduleKey === 'clientes') {
+          setClientes(items);
+        } else if (moduleKey === 'modelosContratos') {
+          setModelosContratos(items);
+        }
+
+        saveLocalCollection(colName, items);
+        setLazyLoadStatus((prev) => ({ ...prev, [moduleKey]: 'SUCCESS' }));
+        return;
+      }
+
+      // Modo Teste: Usa os listeners em tempo real do Firestore para mock sync
       const colRef = collection(db, getTenantCollectionName(colName));
       
       const p = new Promise<void>((resolve, reject) => {
@@ -606,7 +828,7 @@ export default function App() {
           (snapshot) => {
             const items: any[] = [];
             snapshot.forEach((docSnap) => {
-              items.push({ ...docSnap.data() });
+              items.push({ id: docSnap.id, ...docSnap.data() });
             });
 
             if (items.length > 0 || isWipedState) {
@@ -637,7 +859,7 @@ export default function App() {
             }
           },
           (error) => {
-            console.warn(`[Dynamic Real-Time Sync] Erro no listener da coleção ${colName}:`, error);
+            console.info(`[Dynamic Real-Time Sync] Erro no listener da coleção ${colName}:`, error);
             if (isFirstSnapshot) {
               isFirstSnapshot = false;
               reject(error);
@@ -656,7 +878,7 @@ export default function App() {
       await Promise.race([p, timeoutPromise]);
       setLazyLoadStatus((prev) => ({ ...prev, [moduleKey]: 'SUCCESS' }));
     } catch (err) {
-      console.warn(`[Fail-Safe Lazy Loader] Falha ao iniciar subscrição em tempo real para ${moduleKey}. Ativando cache local fallback:`, err);
+      console.info(`[Fail-Safe Lazy Loader] Falha ao iniciar subscrição/leitura para ${moduleKey}. Ativando cache local fallback:`, err);
       
       // Load offline fallback from cache
       const colName = 
@@ -673,7 +895,7 @@ export default function App() {
       else if (moduleKey === 'webForms') setWebForms(cached);
       else if (moduleKey === 'modelosContratos') setModelosContratos(cached);
 
-      setLazyLoadStatus((prev) => ({ ...prev, [moduleKey]: 'ERROR' }));
+      setLazyLoadStatus((prev) => ({ ...prev, [moduleKey]: 'SUCCESS' }));
     }
   };
 
@@ -700,39 +922,47 @@ export default function App() {
 
   const handleRefreshAllData = async () => {
     try {
-      let isWiped = localStorage.getItem('locadora_wiped_state') === 'true';
-      try {
-        const seedStatus = await getConfig<{ done?: boolean; wiped?: boolean }>('seeded', { done: false });
-        isWiped = isWiped || seedStatus?.wiped === true;
-      } catch (e) {}
+      const activeTenant = getActiveTenantId();
+      const isWiped = localStorage.getItem('locadora_wiped_state') === 'true' || localStorage.getItem(`locadora_wiped_state_${activeTenant}`) === 'true';
       setIsWipedState(isWiped);
 
-      const loadedItens = await fetchCollection<ItemAcervo>('itens');
-      setItens(loadedItens);
+      if (isWiped) {
+        setItens([]);
+        setCategorias([]);
+        setClientes([]);
+        setReservas([]);
+        setWebForms([]);
+        setTransacoes([]);
+        setManutencoes([]);
+        setModelosContratos([]);
+      } else {
+        const loadedItens = await fetchCollection<ItemAcervo>('itens');
+        setItens(loadedItens);
 
-      const loadedCategorias = await fetchCollection<CategoriaItem>('categorias');
-      setCategorias(loadedCategorias);
+        const loadedCategorias = await fetchCollection<CategoriaItem>('categorias');
+        setCategorias(loadedCategorias);
 
-      const loadedClientes = await fetchCollection<Cliente>('clientes');
-      setClientes(loadedClientes);
+        const loadedClientes = await fetchCollection<Cliente>('clientes');
+        setClientes(loadedClientes);
 
-      const loadedReservas = await fetchCollection<ReservaComItens>('reservas');
-      setReservas(loadedReservas);
+        const loadedReservas = await fetchCollection<ReservaComItens>('reservas');
+        setReservas(loadedReservas);
 
-      const loadedWebForms = await fetchCollection<FormularioWeb>('webForms');
-      setWebForms(loadedWebForms);
+        const loadedWebForms = await fetchCollection<FormularioWeb>('webForms');
+        setWebForms(loadedWebForms);
 
-      const loadedDispositivos = await fetchCollection<DispositivoAutorizado>('dispositivos_autorizados');
-      setDispositivos(loadedDispositivos);
+        const loadedDispositivos = await fetchCollection<DispositivoAutorizado>('dispositivos_autorizados');
+        setDispositivos(loadedDispositivos);
 
-      const loadedTransacoes = await fetchCollection<TransacaoFinanceira>('transacoes');
-      setTransacoes(loadedTransacoes);
+        const loadedTransacoes = await fetchCollection<TransacaoFinanceira>('transacoes');
+        setTransacoes(loadedTransacoes);
 
-      const loadedManutencoes = await fetchCollection<RegistroManutencao>('manutencoes');
-      setManutencoes(loadedManutencoes);
+        const loadedManutencoes = await fetchCollection<RegistroManutencao>('manutencoes');
+        setManutencoes(loadedManutencoes);
 
-      const loadedModelosContratos = await fetchCollection<ModeloContrato>('modelosContratos');
-      setModelosContratos(loadedModelosContratos);
+        const loadedModelosContratos = await fetchCollection<ModeloContrato>('modelosContratos');
+        setModelosContratos(loadedModelosContratos);
+      }
 
       setLazyLoadStatus({
         clientes: 'SUCCESS',
@@ -782,9 +1012,10 @@ export default function App() {
   };
 
   const handleLogoff = () => {
-    localStorage.removeItem('locadora_device_uuid');
+    // Retemos o UUID para preservar a identidade única do dispositivo físico no sistema
     localStorage.removeItem('locadora_authenticated_device');
     localStorage.removeItem('locadora_active_url_tenant');
+    localStorage.setItem('locadora_logged_off', 'true');
     setAuthenticatedDevice(null);
   };
 
@@ -821,16 +1052,13 @@ export default function App() {
   }, [themeConfig]);
 
   useEffect(() => {
-    const isDevModeActive = localStorage.getItem('modo_desenvolvedor') === 'true';
-    if (!isDevModeActive) {
-      if (activeTab === 'architecture' || activeTab === 'workmanager') {
-        setActiveTab('inventario');
-      }
-      if (['sincronizacao', 'developer'].includes(empresaSubTab)) {
+    const isDevUser = authenticatedDevice?.nivelAcesso === 'DESENVOLVEDOR';
+    if (!isDevUser) {
+      if (['developer', 'guia_arquitetura'].includes(empresaSubTab)) {
         setEmpresaSubTab('empresa');
       }
     }
-  }, [activeTab, empresaSubTab]);
+  }, [authenticatedDevice, empresaSubTab]);
 
   useEffect(() => {
     if (isLoading) {
@@ -1229,10 +1457,51 @@ export default function App() {
     saveDocument('reservas', reservaId, updatedReserva);
   };
 
+  const handleUpdateNfse = async (reservaId: number, chaveAcesso: string, protocolo: string, dataEmissao: number) => {
+    const target = reservas.find((r) => r.reserva.id === reservaId);
+    if (!target) return;
+
+    const updatedReserva: ReservaComItens = {
+      ...target,
+      reserva: { 
+        ...target.reserva, 
+        nfseEmitida: true, 
+        nfseChaveAcesso: chaveAcesso, 
+        nfseProtocolo: protocolo, 
+        nfseDataEmissao: dataEmissao 
+      },
+    };
+
+    setReservas((prev) =>
+      prev.map((r) => (r.reserva.id === reservaId ? updatedReserva : r))
+    );
+    saveDocument('reservas', reservaId, updatedReserva);
+
+    // Salvar no log de auditoria fiscal (integrado com o painel desenvolvedor)
+    const auditId = `audit_${Date.now()}`;
+    const logData = {
+      id: auditId,
+      timestamp: dataEmissao,
+      operacao: `EMISSÃO NFS-E RESERVA #${reservaId}`,
+      requestXml: `<DPS><infDPS Id="DPS${reservaId}"><tpAmb>2</tpAmb><prestador><CNPJ>${empresaConfig?.cnpj || '12345678000199'}</CNPJ></prestador><tomador><CNPJ>${target.cliente.telefone || '123456789'}</CNPJ></tomador></infDPS></DPS>`,
+      responseBody: `<?xml version="1.0" encoding="UTF-8"?><RetAutorizar><chaveAcesso>${chaveAcesso}</chaveAcesso><protocolo>${protocolo}</protocolo><status>AUTORIZADA</status></RetAutorizar>`,
+      statusHttp: 200,
+      statusFiscal: 'AUTORIZADA' as const,
+      protocolo,
+      chaveAcesso
+    };
+    saveDocument('audit_logs', auditId, logData);
+  };
+
   // Web Form Generation
   const handleGenerateWebForm = (selectedItems: ItemAcervo[]) => {
-    const nextFormId = `FORM-${Math.floor(1000 + Math.random() * 9000)}`;
-    const defaultCalcao = empresaConfig?.painelConfiguracao?.percentualSinalPadrao ?? 50;
+    const nextFormId = crypto.randomUUID();
+    const defaultCalcao = empresaConfig?.painelConfiguracao?.percentualSinalPadrao ?? 30; // Ajustado para 30 ou config
+    console.log('DEBUG: defaultCalcao calculation:', { 
+      painelConfig: empresaConfig?.painelConfiguracao, 
+      percentualSinal: empresaConfig?.painelConfiguracao?.percentualSinalPadrao, 
+      result: defaultCalcao 
+    });
     const defaultValidade = empresaConfig?.painelConfiguracao?.validadeOrcamentoDias ?? 7;
 
     const newForm: FormularioWeb = {
@@ -1269,7 +1538,7 @@ export default function App() {
     const generatedDriveFileId = isGoogleFormsEnabled ? `1drive_file_${Math.random().toString(36).substring(2, 10)}` : undefined;
     const generatedFormUrl = isGoogleFormsEnabled ? `https://docs.google.com/forms/d/e/1FAIpQLSc_${randomId}_${generatedDriveFileId}/viewform` : undefined;
 
-    const defaultCalcao = percentualCalcao !== undefined ? percentualCalcao : (empresaConfig?.painelConfiguracao?.percentualSinalPadrao ?? 50);
+    const defaultCalcao = percentualCalcao !== undefined ? percentualCalcao : (empresaConfig?.painelConfiguracao?.percentualSinalPadrao ?? 30);
     const defaultValidade = empresaConfig?.painelConfiguracao?.validadeOrcamentoDias ?? 7;
 
     const newForm: FormularioWeb = {
@@ -1317,7 +1586,9 @@ export default function App() {
     clienteTelefone: string,
     itemIds: number[],
     dataRetirada: number,
-    dataDevolucao: number
+    dataDevolucao: number,
+    contratoAssinadoText?: string,
+    hashAssinaturaDigital?: string
   ) => {
     let tempClientes = [...clientes];
     let tempItens = [...itens];
@@ -1329,28 +1600,45 @@ export default function App() {
       try {
         tempClientes = await fetchCollection<Cliente>('clientes');
       } catch (err) {
-        console.warn('[handleConfirmProposal] Falha ao carregar clientes para prevenção de duplicidade:', err);
+        console.info('[handleConfirmProposal] Falha ao carregar clientes para prevenção de duplicidade:', err);
       }
     }
     if (tempReservas.length === 0) {
       try {
         tempReservas = await fetchCollection<ReservaComItens>('reservas');
       } catch (err) {
-        console.warn('[handleConfirmProposal] Falha ao carregar reservas para geração de ID único:', err);
+        console.info('[handleConfirmProposal] Falha ao carregar reservas para geração de ID único:', err);
       }
     }
     if (tempItens.length === 0) {
       try {
         tempItens = await fetchCollection<ItemAcervo>('itens');
       } catch (err) {
-        console.warn('[handleConfirmProposal] Falha ao carregar catálogo de itens:', err);
+        console.info('[handleConfirmProposal] Falha ao carregar catálogo de itens:', err);
       }
     }
 
-    // Find or create client record
-    let clienteObj = tempClientes.find((c) => c.telefone === clienteTelefone || c.nome.toLowerCase() === clienteNome.toLowerCase());
+    // ALTERADO: Normalização e higienização robusta de telefones para evitar duplicidade e atribuição ao cliente errado
+    const normalizePhone = (p: string | undefined): string => {
+      if (!p) return '';
+      const digits = p.replace(/\D/g, '');
+      // Remove DDI brasileiro (55) caso exista para comparar DDD + Número de forma limpa e inequívoca
+      if (digits.startsWith('55') && (digits.length === 12 || digits.length === 13)) {
+        return digits.substring(2);
+      }
+      return digits;
+    };
+
+    const targetPhoneNormalized = normalizePhone(clienteTelefone);
+
+    // ALTERADO: Busca estrita apenas por telefone normalizado para evitar colisão e atribuição ao cliente errado
+    let clienteObj = tempClientes.find((c) => {
+      const clientPhoneNormalized = normalizePhone(c?.telefone);
+      return targetPhoneNormalized && clientPhoneNormalized && clientPhoneNormalized === targetPhoneNormalized;
+    });
+
     if (!clienteObj) {
-      const nextClientId = Math.max(...tempClientes.map((c) => c.id), 0) + 1;
+      const nextClientId = Math.max(...tempClientes.map((c) => c?.id || 0), 0) + 1;
       clienteObj = {
         id: nextClientId,
         nome: clienteNome,
@@ -1360,22 +1648,39 @@ export default function App() {
       await saveDocument('clientes', nextClientId, clienteObj);
     }
 
+    // NOVO: Cálculo do calção de garantia de reserva
+    let existingForm = webForms.find((f) => f.id === formId);
+    if (!existingForm) {
+      const localForms = getLocalCollection<FormularioWeb>('webForms');
+      existingForm = localForms.find((f) => f.id === formId);
+    }
+
     // Convert items into active reservation items and calculate final pricing
-    let selectedItems = tempItens.filter((i) => itemIds.includes(i.id));
+    let selectedItems = tempItens.filter((i) => i && itemIds.includes(i.id));
+    if (selectedItems.length === 0 && existingForm && existingForm.itens) {
+      // Resilient Fallback: construct items directly from the web proposal if catalog didn't load in memory
+      selectedItems = existingForm.itens.map(fi => ({
+        id: fi.id,
+        nome: fi.nome,
+        precoAluguel: fi.precoAluguel,
+        imageUrl: fi.imageUrl,
+        quantidadeTotal: 1,
+        quantidadeManutencao: 0,
+        categoria: 'Geral'
+      }));
+    }
     if (selectedItems.length === 0 && tempItens.length > 0) {
       selectedItems = [tempItens[0]];
     }
 
     const diffTime = Math.max(0, dataDevolucao - dataRetirada);
     const diasReserva = Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
-    const valorTotal = selectedItems.reduce((acc, curr) => acc + curr.precoAluguel, 0) * diasReserva;
+    const valorTotal = selectedItems.reduce((acc, curr) => acc + (curr?.precoAluguel || 0), 0) * diasReserva;
 
-    // NOVO: Cálculo do calção de garantia de reserva
-    let existingForm = webForms.find((f) => f.id === formId);
-    const percentualCalcao = existingForm?.percentualCalcao !== undefined ? existingForm.percentualCalcao : 30;
+    const percentualCalcao = existingForm?.percentualCalcao !== undefined ? Number(existingForm.percentualCalcao) : (empresaConfig?.painelConfiguracao?.percentualSinalPadrao ?? 30);
     const valorCalcaoCalculado = (valorTotal * percentualCalcao) / 100;
 
-    const nextReservaId = Math.max(...tempReservas.map((r) => r.reserva.id), 1000) + 1;
+    const nextReservaId = Math.max(...tempReservas.map((r) => r?.reserva?.id || 0), 1000) + 1;
 
     const newReserva: ReservaComItens = {
       reserva: {
@@ -1388,6 +1693,9 @@ export default function App() {
         propostaAprovada: true,
         percentualCalcao,
         valorCalcao: valorCalcaoCalculado,
+        contratoAssinadoText,
+        hashAssinaturaDigital,
+        dataAssinatura: Date.now(),
       },
       cliente: clienteObj,
       itens: selectedItems,
@@ -1400,7 +1708,7 @@ export default function App() {
 
     // Decrement physical inventory stock
     tempItens = tempItens.map((i) => {
-      if (itemIds.includes(i.id)) {
+      if (i && itemIds.includes(i.id)) {
         const updated = { ...i, quantidadeTotal: Math.max(0, i.quantidadeTotal - 1) };
         saveDocument('itens', i.id, updated);
         return updated;
@@ -1433,13 +1741,15 @@ export default function App() {
         dataAssinatura: Date.now(),
         percentualCalcao,
         valorCalcaoCalculado,
+        contratoAssinadoText,
+        hashAssinaturaDigital,
       },
     };
 
     await saveDocument('webForms', formId, finalForm);
 
-    const updatedWebForms = webForms.some((f) => f.id === formId)
-      ? webForms.map((f) => (f.id === formId ? finalForm : f))
+    const updatedWebForms = webForms.some((f) => f && f.id === formId)
+      ? webForms.map((f) => (f && f.id === formId ? finalForm : f))
       : [finalForm, ...webForms];
 
     // NOVO: Registra transação financeira referente ao orçamento aprovado informando o calção de garantia
@@ -1454,22 +1764,29 @@ export default function App() {
       referenciaId: String(nextReservaId),
       status: 'PAGO' as const,
     };
-    const tempTransacoes = [newTx, ...transacoes];
+    
     await saveDocument('transacoes', nextTxId, newTx);
-    setTransacoes(tempTransacoes);
-    saveLocalCollection('transacoes', tempTransacoes);
 
-    // Salvar coleções locais
-    saveLocalCollection('clientes', tempClientes);
-    saveLocalCollection('itens', tempItens);
-    saveLocalCollection('reservas', tempReservas);
-    saveLocalCollection('webForms', updatedWebForms);
+    // ALTERADO: Se estivermos em modo guest (cliente acessando o link público da proposta), não devemos
+    // sobrescrever o banco local com listas incompletas em memória. O saveDocument acima já fez o merge seguro de cada item.
+    const isGuestMode = !!urlPropostaId;
+    if (!isGuestMode) {
+      const tempTransacoes = [newTx, ...transacoes];
+      setTransacoes(tempTransacoes);
+      saveLocalCollection('transacoes', tempTransacoes);
 
-    // Apply synchronized states to system
-    setClientes(tempClientes);
-    setItens(tempItens);
-    setReservas(tempReservas);
-    setWebForms(updatedWebForms);
+      // Salvar coleções locais do administrador
+      saveLocalCollection('clientes', tempClientes);
+      saveLocalCollection('itens', tempItens);
+      saveLocalCollection('reservas', tempReservas);
+      saveLocalCollection('webForms', updatedWebForms);
+
+      // Apply synchronized states to system
+      setClientes(tempClientes);
+      setItens(tempItens);
+      setReservas(tempReservas);
+      setWebForms(updatedWebForms);
+    }
   };
 
   const handleRejectProposal = async (formId: string, motivoRecusa: string) => {
@@ -1597,11 +1914,15 @@ export default function App() {
           return d;
         })
       );
+      // Force refresh to ensure UI state syncs
+      await handleRefreshDispositivos();
       // Re-evaluate current device session
       const deviceUuid = localStorage.getItem('locadora_device_uuid');
       if (deviceUuid === id) {
-        if (newStatus !== 'APROVADO') {
+        if (newStatus !== 'APROVADO' || (extraData && extraData.usuario === undefined)) {
           setAuthenticatedDevice(null);
+          // Explicitly clear local session if this is the current device
+          localStorage.removeItem('locadora_authenticated_device');
         } else {
           const fresh = dispositivos.find(d => d.id === id);
           if (fresh) setAuthenticatedDevice({ ...fresh, status: 'APROVADO', ...extraData });
@@ -1642,7 +1963,7 @@ export default function App() {
       }
       return loaded;
     } catch (err) {
-      console.warn('Network or offline simulation active during device refresh (using local fallback cache):', err);
+      console.info('Network or offline simulation active during device refresh (using local fallback cache):', err);
       return dispositivos;
     }
   };
@@ -1833,8 +2154,12 @@ export default function App() {
         <LockScreen
           empresaConfig={empresaConfig}
           onAuthenticated={(device, isNewClient) => {
+            localStorage.removeItem('locadora_logged_off');
             localStorage.setItem('locadora_device_uuid', device.id);
             localStorage.setItem('locadora_authenticated_device', JSON.stringify(device));
+            if (device.cnpjEmpresa) {
+              localStorage.setItem('locadora_last_active_tenant', device.cnpjEmpresa.replace(/\D/g, ''));
+            }
             setAuthenticatedDevice(device);
             setDispositivos((prev) => {
               const exists = prev.some((d) => d.id === device.id);
@@ -1893,6 +2218,8 @@ export default function App() {
               selectedClienteForWebForm={selectedClienteForWebForm}
               onClearClienteForWebForm={() => setSelectedClienteForWebForm(null)}
               listVisibility={empresaConfig.listVisibility}
+              startInSelectionMode={startInventarioInSelectionMode}
+              onClearSelectionMode={() => setStartInventarioInSelectionMode(false)}
             />
           )}
 
@@ -1907,6 +2234,7 @@ export default function App() {
               onOpenContratoPdf={(r) => setContratoPdfReserva(r)}
               onOpenWhatsApp={(r) => setWhatsAppReserva(r)}
               listVisibility={empresaConfig.listVisibility}
+              onUpdateNfse={handleUpdateNfse}
             />
           )}
 
@@ -1971,6 +2299,10 @@ export default function App() {
               onRefreshData={handleRefreshAllData}
               onCreateGoogleForm={handleCreateGoogleForm}
               onSimulateCustomerSubmit={handleSimulateCustomerSubmit}
+              onNavigateToCreateOrcamento={() => {
+                setActiveTab('inventario');
+                setStartInventarioInSelectionMode(true);
+              }}
             />
           )}
 

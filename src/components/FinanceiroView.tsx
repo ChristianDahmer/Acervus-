@@ -65,6 +65,18 @@ export const FinanceiroView: React.FC<FinanceiroViewProps> = ({
     data: new Date().toISOString().substring(0, 10),
   });
 
+  const handleOpenAdd = () => {
+    setNewTransData({
+      tipo: 'RECEITA' as 'RECEITA' | 'DESPESA',
+      categoria: 'Aluguel de Acervo',
+      valor: '',
+      descricao: '',
+      status: 'PAGO' as 'PAGO' | 'PENDENTE',
+      data: new Date().toISOString().substring(0, 10),
+    });
+    setIsAddModalOpen(true);
+  };
+
   // Active Tab: 'transacoes' | 'graficos' | 'relatorios' | 'pendentes_reserva'
   const [activeSubTab, setActiveSubTab] = useState<'transacoes' | 'graficos' | 'relatorios' | 'pendentes_reserva'>('transacoes');
 
@@ -319,7 +331,7 @@ export const FinanceiroView: React.FC<FinanceiroViewProps> = ({
 
           <button
             type="button"
-            onClick={() => setIsAddModalOpen(true)}
+            onClick={handleOpenAdd}
             className="bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A0A0B] px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider shadow-lg shadow-[#D4AF37]/10 transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95"
           >
             <PlusCircle size={15} />
