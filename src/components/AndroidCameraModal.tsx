@@ -449,7 +449,7 @@ export const AndroidCameraModal: React.FC<AndroidCameraModalProps> = ({
     }, 900);
 
     setTimeout(() => {
-      addLog("Servidor conectado ao Google Gemini 3.6-Flash API.");
+      addLog("Servidor conectado ao Google Gemini 3.7-Flash API.");
       addLog("Processando reconhecimento óptico de caracteres (OCR) avançado...");
     }, 1500);
 

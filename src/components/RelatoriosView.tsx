@@ -11,6 +11,7 @@ import {
 } from '../types';
 import { AVAILABLE_TEMPLATE_TAGS, fillContractTemplate } from '../utils/templateEngine';
 import { formatarDataBr, formatarMoeda } from '../utils/whatsappTemplates';
+import { getAppLogoUrl, handleLogoError } from '../utils/logoUtils';
 import { printHtmlContent, printElementById } from '../utils/printUtils';
 import { 
   FileText, 
@@ -574,14 +575,24 @@ export const RelatoriosView: React.FC<RelatoriosViewProps> = ({
                 {/* Live A4 Paper Mockup */}
                 <div className="bg-white text-slate-900 p-5 rounded-xl border border-slate-300 shadow-inner font-sans text-xs space-y-4 leading-relaxed">
                   {/* Header */}
-                  <div className="border-b-2 border-amber-600 pb-3 flex justify-between items-start">
-                    <div>
-                      <h4 className="font-black text-base text-amber-700 tracking-tight uppercase">
-                        {empresaConfig.nomeFantasia || 'NOME FANTASIA DA EMPRESA'}
-                      </h4>
-                      <p className="text-[10px] text-slate-500 font-semibold uppercase font-sans">
-                        Contrato de Locação de Bens Móveis
-                      </p>
+                  <div className="border-b-2 border-amber-600 pb-3 flex justify-between items-center gap-3">
+                    <div className="flex items-center gap-2.5">
+                      {!!getAppLogoUrl(empresaConfig?.logoUrl) && (
+                        <img
+                          src={getAppLogoUrl(empresaConfig?.logoUrl)}
+                          alt="Logo da Empresa"
+                          onError={handleLogoError}
+                          className="h-10 w-auto object-contain shrink-0"
+                        />
+                      )}
+                      <div>
+                        <h4 className="font-black text-base text-amber-700 tracking-tight uppercase">
+                          {empresaConfig.nomeFantasia || 'NOME FANTASIA DA EMPRESA'}
+                        </h4>
+                        <p className="text-[10px] text-slate-500 font-semibold uppercase font-sans">
+                          Contrato de Locação de Bens Móveis
+                        </p>
+                      </div>
                     </div>
                     <div className="text-right">
                       <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full font-sans">

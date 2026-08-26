@@ -30,7 +30,7 @@ export function getActiveTenantId(): string {
     const hashParams = new URLSearchParams(hashPart);
     const urlTenant = params.get('tenant') || params.get('tenantId') || hashParams.get('tenant') || hashParams.get('tenantId');
     if (urlTenant) {
-      const sanitized = urlTenant.replace(/\D/g, '');
+      const sanitized = urlTenant.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
       if (sanitized) {
         localStorage.setItem('locadora_active_url_tenant', sanitized);
         return sanitized;
@@ -43,7 +43,7 @@ export function getActiveTenantId(): string {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.cnpjEmpresa) {
-          const tenantId = parsed.cnpjEmpresa.replace(/\D/g, '');
+          const tenantId = parsed.cnpjEmpresa.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
           if (tenantId) {
             localStorage.setItem('locadora_last_active_tenant', tenantId);
             return tenantId;
@@ -56,7 +56,7 @@ export function getActiveTenantId(): string {
     try {
       const lastActive = localStorage.getItem('locadora_last_active_tenant');
       if (lastActive) {
-        const sanitized = lastActive.replace(/\D/g, '');
+        const sanitized = lastActive.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
         if (sanitized) {
           return sanitized;
         }
@@ -128,8 +128,8 @@ export function getLocalCollection<T>(colName: string): T[] {
         isModoTeste = false;
       }
     } else {
-      // Default fallback is test mode only if not explicitly configured
-      isModoTeste = true;
+      // Default fallback is production mode to ensure clean data isolation
+      isModoTeste = false;
     }
   } catch (e) {}
 
@@ -184,19 +184,20 @@ export async function fetchCollection<T>(colName: string): Promise<T[]> {
     const items = await res.json() as T[];
     
     if (items && Array.isArray(items)) {
-      // NOVO/ALTERADO: Mescla dados remotos com cache local para evitar perda de propostas ou agendamentos recém-gerados
+      // Preserve ONLY explicit un-synced local drafts created offline
       const localItems = getLocalCollection<T>(colName);
-      const mergedItems = [...items];
+      const localDrafts = localItems.filter((item: any) => item?._isLocalDraft === true);
       
-      for (const localItem of localItems) {
-        const localId = (localItem as any)?.id || ((localItem as any)?.reserva?.id);
-        if (localId !== undefined) {
+      const mergedItems = [...items];
+      for (const draft of localDrafts) {
+        const draftId = (draft as any)?.id || ((draft as any)?.reserva?.id);
+        if (draftId !== undefined) {
           const existsInRemote = items.some((remoteItem: any) => {
             const remoteId = remoteItem?.id || remoteItem?.reserva?.id;
-            return remoteId !== undefined && String(remoteId) === String(localId);
+            return remoteId !== undefined && String(remoteId) === String(draftId);
           });
           if (!existsInRemote) {
-            mergedItems.push(localItem);
+            mergedItems.push(draft);
           }
         }
       }
@@ -324,7 +325,7 @@ export async function deleteDocument(colName: string, docId: string | number): P
 // Save config
 export async function saveConfig(configName: string, data: any): Promise<void> {
   const tenantId = configName === 'empresaConfig' && data?.cnpj 
-    ? String(data.cnpj).replace(/\D/g, '') 
+    ? String(data.cnpj).replace(/[^a-zA-Z0-9]/g, '').toUpperCase() 
     : getActiveTenantId();
     
   const realConfigName = `${configName}_${tenantId}`;
@@ -417,9 +418,9 @@ export async function seedTenantDatabaseIfEmpty(tenantId: string): Promise<void>
   if (!tenantId || tenantId === 'default') return;
   
   try {
-    const currentConf = await getConfig<EmpresaConfig>('empresaConfig', INITIAL_EMPRESA_CONFIG);
-    if (currentConf?.ambienteSistema !== 'teste') {
-      return; // Do NOT auto-seed sample test data in Production Mode
+    const currentConf = await getConfig<EmpresaConfig>('empresaConfig', null as any);
+    if (!currentConf || currentConf.ambienteSistema !== 'teste') {
+      return; // Do NOT auto-seed sample test data in Production Mode or unconfigured tenants
     }
 
     if (typeof window !== 'undefined' && (localStorage.getItem('locadora_wiped_state') === 'true' || localStorage.getItem(`locadora_wiped_state_${tenantId}`) === 'true')) {

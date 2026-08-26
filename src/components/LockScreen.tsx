@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getAppLogoUrl, handleLogoError } from '../utils/logoUtils';
+import { AcervusSystemLogo } from './AcervusSystemLogo';
 import { 
   ShieldCheck, 
   Smartphone, 
@@ -24,7 +25,9 @@ import {
   Mail,
   MailCheck,
   Send,
-  KeyRound
+  KeyRound,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { DispositivoAutorizado, EmpresaConfig } from '../types';
 import { saveDocument, saveConfig } from '../lib/firebaseSync';
@@ -78,6 +81,8 @@ export const LockScreen: React.FC<LockScreenProps> = ({
   // Dynamic SIM/Phone detection state
   const [isDetectingPhone, setIsDetectingPhone] = useState(false);
   const [phoneDetected, setPhoneDetected] = useState(false);
+  // NOVO: Controle de visibilidade de senha (oculta por padrão)
+  const [showSenha, setShowSenha] = useState(false);
 
   // Biometric state
   const [hasBiometricRegistered, setHasBiometricRegistered] = useState(false);
@@ -484,30 +489,46 @@ export const LockScreen: React.FC<LockScreenProps> = ({
   const currentStatus = matchedDevice?.status;
 
   return (
-    <div className="min-h-screen bg-[#0A0A0B] text-[#E4E4E7] font-sans flex flex-col justify-center items-center px-4 py-12 select-none">
-      <div className="w-full max-w-md bg-[#111113] border border-[#27272A] rounded-2xl p-8 shadow-2xl space-y-6 relative overflow-hidden">
+    <div className="min-h-screen bg-[#0A0A0B] text-[#E4E4E7] font-sans flex flex-col justify-center items-center px-4 py-6 select-none">
+      <div className={`w-full ${formMode === 'REGISTER' ? 'max-w-lg' : 'max-w-md'} bg-[#111113] border border-[#27272A] rounded-2xl p-5 sm:p-6 shadow-2xl space-y-4 relative overflow-hidden`}>
         
         {/* Subtle decorative background effect */}
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-500/50 via-[#D4AF37] to-emerald-500/50" />
 
-        {/* Header */}
+        {/* Header with Prominent System Logo */}
         <div className="flex flex-col items-center space-y-3 text-center">
-          {!!getAppLogoUrl(empresaConfig?.logoUrl) && (
-            <div className="w-28 h-28 sm:w-32 sm:h-32 flex items-center justify-center bg-transparent shrink-0">
-              <img 
-                src={getAppLogoUrl(empresaConfig?.logoUrl)} 
-                alt={empresaConfig?.nomeFantasia || "Logo"} 
-                className="w-full h-full object-contain filter drop-shadow-lg" 
-                referrerPolicy="no-referrer" 
-                onError={handleLogoError}
-              />
+          {/* Logo Container with Ambient Radial Glow */}
+          <div className="relative group flex flex-col items-center">
+            <div className="absolute -inset-2 bg-gradient-to-r from-cyan-500/20 via-[#D4AF37]/20 to-blue-600/20 rounded-2xl blur-lg opacity-70 group-hover:opacity-100 transition duration-500" />
+            <div className="relative p-2.5 bg-gradient-to-b from-[#18181B] to-[#0F0F12] border border-[#27272A] rounded-xl shadow-2xl flex items-center justify-center">
+              <AcervusSystemLogo size={80} showText={false} />
             </div>
-          )}
+          </div>
+
           <div>
-            <h1 className="font-serif italic text-2xl text-white">{empresaConfig?.nomeFantasia || "Acervus"}</h1>
-            <p className="text-[11px] uppercase tracking-widest text-[#D4AF37] font-semibold mt-0.5">
-              Sistema de Locações & Gestão
+            <h1 className="font-serif italic text-xl text-white font-bold tracking-tight">Acervus Core</h1>
+            <p className="text-[10px] uppercase tracking-widest text-[#D4AF37] font-semibold mt-0.5 font-mono">
+              Gestão Inteligente de Acervos & Reservas
             </p>
+
+            {/* Tenant Company Name & Optional Badge */}
+            {empresaConfig?.nomeFantasia && (
+              <div className="mt-2 pt-2 border-t border-[#27272A] flex items-center justify-center gap-2">
+                <span className="text-[9px] uppercase font-mono text-[#71717A]">Unidade Locadora:</span>
+                {!!getAppLogoUrl(empresaConfig?.logoUrl) && (
+                  <img 
+                    src={getAppLogoUrl(empresaConfig?.logoUrl)} 
+                    alt={empresaConfig?.nomeFantasia || "Logo Empresa"} 
+                    className="w-4 h-4 object-contain rounded border border-[#27272A] bg-[#18181B]" 
+                    referrerPolicy="no-referrer" 
+                    onError={handleLogoError}
+                  />
+                )}
+                <span className="text-xs text-[#E4E4E7] font-semibold font-mono">
+                  {empresaConfig.nomeFantasia}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -526,30 +547,30 @@ export const LockScreen: React.FC<LockScreenProps> = ({
 
         {/* --- SCREEN 1: ALWAYS PRESENTED FIRST IF BIOMETRICS ARE REGISTERED --- */}
         {isBiometricActiveAndAvailable && !showManualForm ? (
-          <div className="space-y-6 animate-fade-in">
+          <div className="space-y-4 animate-fade-in">
             {/* Registered User Profile Badge */}
-            <div className="bg-[#18181B] border border-emerald-500/30 p-4 rounded-2xl space-y-3 relative overflow-hidden">
+            <div className="bg-[#18181B] border border-emerald-500/30 p-3 rounded-xl space-y-2 relative overflow-hidden">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-400 flex items-center gap-1">
-                  <UserCheck size={14} /> Usuário com Biometria
+                <span className="text-[9px] uppercase font-bold tracking-wider text-emerald-400 flex items-center gap-1">
+                  <UserCheck size={12} /> Usuário com Biometria
                 </span>
-                <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
                   Digital Cadastrada
                 </span>
               </div>
 
-              <div className="flex items-center gap-3 pt-1">
-                <div className="w-11 h-11 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold shrink-0">
-                  <User size={22} />
+              <div className="flex items-center gap-2.5 pt-0.5">
+                <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold shrink-0">
+                  <User size={18} />
                 </div>
                 <div className="truncate">
-                  <h3 className="font-bold text-white text-sm truncate">
+                  <h3 className="font-bold text-white text-xs truncate">
                     {matchedDevice?.usuario || empresaConfig.nomeRepresentante || 'Representante Legal'}
                   </h3>
-                  <p className="text-xs text-[#A1A1AA] font-mono truncate">
+                  <p className="text-[10px] text-[#A1A1AA] font-mono truncate">
                     CNPJ: {matchedDevice?.cnpjEmpresa || empresaConfig.cnpj}
                   </p>
-                  <p className="text-[10px] text-emerald-400/80 font-medium mt-0.5">
+                  <p className="text-[9px] text-emerald-400/80 font-medium mt-0.5">
                     Terminal: {matchedDevice?.nomeDispositivo || 'Smartphone Verificado'}
                   </p>
                 </div>
@@ -557,23 +578,23 @@ export const LockScreen: React.FC<LockScreenProps> = ({
             </div>
 
             {/* Interactive Fingerprint Scanner Container */}
-            <div className="flex flex-col items-center justify-center text-center space-y-4 py-2">
+            <div className="flex flex-col items-center justify-center text-center space-y-3 py-1">
               <button
                 type="button"
                 onClick={handleBiometricTrigger}
                 disabled={loading}
-                className="group relative flex items-center justify-center w-28 h-28 rounded-3xl bg-[#18181B] border-2 border-emerald-500/50 hover:border-emerald-400 text-emerald-400 transition-all cursor-pointer shadow-2xl shadow-emerald-500/10 active:scale-95 disabled:opacity-50"
+                className="group relative flex items-center justify-center w-20 h-20 rounded-2xl bg-[#18181B] border-2 border-emerald-500/50 hover:border-emerald-400 text-emerald-400 transition-all cursor-pointer shadow-xl shadow-emerald-500/10 active:scale-95 disabled:opacity-50"
               >
-                <div className="absolute inset-0 rounded-3xl border border-emerald-500/30 animate-ping opacity-25 pointer-events-none" />
-                <Fingerprint size={60} className="text-emerald-400 group-hover:scale-110 transition-transform duration-300" />
+                <div className="absolute inset-0 rounded-2xl border border-emerald-500/30 animate-ping opacity-25 pointer-events-none" />
+                <Fingerprint size={42} className="text-emerald-400 group-hover:scale-115 transition-transform duration-300" />
               </button>
 
-              <div className="space-y-1">
-                <h4 className="font-bold text-white text-sm">
+              <div className="space-y-0.5">
+                <h4 className="font-bold text-white text-xs">
                   Toque na Digital para Acessar
                 </h4>
-                <p className="text-xs text-[#A1A1AA] max-w-xs leading-relaxed">
-                  Dispositivo e digital cadastrados identificados. Toque acima para autenticar instantaneamente.
+                <p className="text-[10px] text-[#A1A1AA] max-w-xs leading-relaxed">
+                  Dispositivo verificado. Toque acima para autenticar instantaneamente.
                 </p>
               </div>
 
@@ -581,29 +602,29 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                 type="button"
                 onClick={handleBiometricTrigger}
                 disabled={loading}
-                className="w-full bg-emerald-500 hover:bg-emerald-600 text-black py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"
+                className="w-full bg-emerald-500 hover:bg-emerald-600 text-black py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all cursor-pointer shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-1.5"
               >
-                {loading ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                {loading ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
                 <span>Entrar com Impressão Digital</span>
               </button>
             </div>
 
             {/* Alternative option to use password */}
-            <div className="pt-2 border-t border-[#27272A] flex justify-between items-center text-xs">
+            <div className="pt-2.5 border-t border-[#27272A] flex justify-between items-center text-xs">
               <button
                 type="button"
                 onClick={() => {
                   setFormMode('LOGIN');
                   setShowManualForm(true);
                 }}
-                className="text-[#A1A1AA] hover:text-white font-medium flex items-center gap-1 transition-colors cursor-pointer"
+                className="text-[#A1A1AA] hover:text-white text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
               >
-                <Key size={14} className="text-[#D4AF37]" />
+                <Key size={12} className="text-[#D4AF37]" />
                 <span>Entrar com Senha de Acesso</span>
               </button>
 
-              <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
-                <Sparkles size={12} /> Android Biometrics
+              <span className="text-[9px] text-emerald-400 font-mono flex items-center gap-1">
+                <Sparkles size={10} /> Android Biometrics
               </span>
             </div>
           </div>
@@ -636,9 +657,9 @@ export const LockScreen: React.FC<LockScreenProps> = ({
 
             {/* Device Status Badge (If existing) */}
             {currentStatus && formMode === 'LOGIN' && (
-              <div className="flex items-center justify-between p-3 bg-[#18181B] border border-[#27272A] rounded-xl text-xs">
-                <span className="text-[#A1A1AA]">Status do Terminal Atual:</span>
-                <span className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] uppercase border ${
+              <div className="flex items-center justify-between p-2 bg-[#18181B] border border-[#27272A] rounded-xl text-xs">
+                <span className="text-[#A1A1AA] text-[11px]">Status do Terminal Atual:</span>
+                <span className={`px-2 py-0.5 rounded-full font-bold text-[9px] uppercase border ${
                   currentStatus === 'APROVADO' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
                   currentStatus === 'PENDENTE' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 animate-pulse' :
                   'bg-red-500/10 text-red-400 border-red-500/20'
@@ -650,17 +671,17 @@ export const LockScreen: React.FC<LockScreenProps> = ({
               </div>
             )}
 
-            <form onSubmit={handleAuth} className="space-y-4">
+            <form onSubmit={handleAuth} className="space-y-3">
               
               {/* --- LOGIN MODE FIELDS (Username + Password) --- */}
               {formMode === 'LOGIN' ? (
                 <>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-[#A1A1AA] flex items-center gap-1.5">
-                      <User size={14} className="text-[#D4AF37]" /> Nome de Usuário / Login
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-[#A1A1AA] flex items-center gap-1">
+                      <User size={12} className="text-[#D4AF37]" /> Nome de Usuário / Login
                     </label>
                     <div className="relative w-full">
-                      <User size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#71717A] pointer-events-none shrink-0 z-10" />
+                      <User size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#71717A] pointer-events-none shrink-0 z-10" />
                       <input
                         type="text"
                         required
@@ -669,177 +690,202 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                         onChange={(e) => setUsuario(e.target.value)}
                         onFocus={handleFocusScroll}
                         placeholder="Ex: admin ou Nome do Operador"
-                        className="w-full h-11 pl-10 pr-10 bg-[#18181B] border border-[#27272A] rounded-xl text-sm text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all"
+                        className="w-full h-9.5 pl-9 pr-9 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all"
                       />
                     </div>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-[#A1A1AA] flex items-center gap-1.5">
-                      <Key size={14} className="text-[#D4AF37]" /> Senha de Acesso
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-[#A1A1AA] flex items-center gap-1">
+                      <Key size={12} className="text-[#D4AF37]" /> Senha de Acesso
                     </label>
-                    <div className="relative flex items-center h-11 w-full">
-                      <Key size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#71717A] pointer-events-none shrink-0 z-10" />
+                    <div className="relative flex items-center h-9.5 w-full">
+                      <Key size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#71717A] pointer-events-none shrink-0 z-10" />
                       <input
-                        type="password"
+                        type={showSenha ? 'text' : 'password'}
                         required
                         maxLength={128}
                         value={senha}
                         onChange={(e) => setSenha(e.target.value)}
                         onFocus={handleFocusScroll}
                         placeholder="••••••••"
-                        className="w-full h-11 pl-10 pr-3.5 bg-[#18181B] border border-[#27272A] rounded-xl text-sm text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all"
+                        className="w-full h-9.5 pl-9 pr-9 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all"
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowSenha(!showSenha)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[#71717A] hover:text-[#D4AF37] transition-colors p-1 cursor-pointer"
+                        title={showSenha ? 'Ocultar senha' : 'Exibir senha'}
+                      >
+                        {showSenha ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
                     </div>
                   </div>
                 </>
               ) : (
                 /* --- REGISTRATION MODE FIELDS (Requires Email) --- */
-                <div className="space-y-4 pt-2 animate-fade-in">
+                <div className="space-y-3 pt-1.5 animate-fade-in">
                   
-                  {/* User / Representative Name */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-[#A1A1AA] flex items-center gap-1.5">
-                      <User size={14} className="text-[#D4AF37]" /> Nome do Representante / Proprietário
-                    </label>
-                    <div className="relative flex items-center h-11 w-full">
-                      <User size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#71717A] pointer-events-none shrink-0 z-10" />
-                      <input
-                        type="text"
-                        required
-                        maxLength={80}
-                        value={usuario}
-                        onChange={(e) => setUsuario(e.target.value)}
-                        onFocus={handleFocusScroll}
-                        placeholder="Ex: João da Silva"
-                        className="w-full h-11 pl-10 pr-3.5 bg-[#18181B] border border-[#27272A] rounded-xl text-sm text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Email Field (MANDATORY for New Client Registration) */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-[#A1A1AA] flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
-                        <Mail size={14} className="text-[#D4AF37]" /> E-mail de Confirmação (Obrigatório)
-                      </span>
-                      <span className="text-[10px] text-[#D4AF37] font-mono">Envia Semente</span>
-                    </label>
-                    <div className="relative flex items-center h-11 w-full">
-                      <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#71717A] pointer-events-none shrink-0 z-10" />
-                      <input
-                        type="email"
-                        required
-                        maxLength={100}
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        onFocus={handleFocusScroll}
-                        placeholder="Ex: contato@empresa.com.br"
-                        className="w-full h-11 pl-10 pr-3.5 bg-[#18181B] border border-[#27272A] rounded-xl text-sm text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  {/* CNPJ Field */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-[#A1A1AA] flex items-center gap-1.5">
-                      <Building2 size={14} className="text-[#D4AF37]" /> CNPJ do Cliente/Empresa
-                    </label>
-                    <div className="relative flex items-center h-11 w-full">
-                      <Building2 size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#71717A] pointer-events-none shrink-0 z-10" />
-                      <input
-                        type="text"
-                        required
-                        maxLength={20}
-                        value={cnpj}
-                        onChange={(e) => setCnpj(e.target.value)}
-                        onFocus={handleFocusScroll}
-                        placeholder="Ex: 45.678.910/0001-23"
-                        className="w-full h-11 pl-10 pr-3.5 bg-[#18181B] border border-[#27272A] rounded-xl text-sm text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Password Field */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-[#A1A1AA] flex items-center gap-1.5">
-                      <Key size={14} className="text-[#D4AF37]" /> Defina a Senha de Acesso
-                    </label>
-                    <div className="relative flex items-center h-11 w-full">
-                      <Key size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#71717A] pointer-events-none shrink-0 z-10" />
-                      <input
-                        type="password"
-                        required
-                        maxLength={128}
-                        value={senha}
-                        onChange={(e) => setSenha(e.target.value)}
-                        onFocus={handleFocusScroll}
-                        placeholder="••••••••"
-                        className="w-full h-11 pl-10 pr-3.5 bg-[#18181B] border border-[#27272A] rounded-xl text-sm text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Dynamic SIM card Phone Field */}
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between items-center">
-                      <label className="text-xs font-semibold text-[#A1A1AA] flex items-center gap-1.5">
-                        <Phone size={14} className="text-[#D4AF37]" /> Telefone / WhatsApp
+                  {/* Grid 1: Nome & E-mail */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* User / Representative Name */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-[#A1A1AA] flex items-center gap-1">
+                        <User size={12} className="text-[#D4AF37]" /> Nome do Representante
                       </label>
-                      
-                      {isDetectingPhone ? (
-                        <span className="text-[10px] text-amber-400 flex items-center gap-1 font-semibold animate-pulse">
-                          <Radio size={12} className="animate-spin text-amber-500" />
-                          Lendo SIM Card...
-                        </span>
-                      ) : phoneDetected ? (
-                        <span className="text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-mono font-bold flex items-center gap-1 animate-pulse">
-                          <CheckCircle2 size={10} />
-                          SIM1 Detectado
-                        </span>
-                      ) : null}
+                      <div className="relative flex items-center h-9.5 w-full">
+                        <User size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#71717A] pointer-events-none shrink-0 z-10" />
+                        <input
+                          type="text"
+                          required
+                          maxLength={80}
+                          value={usuario}
+                          onChange={(e) => setUsuario(e.target.value)}
+                          onFocus={handleFocusScroll}
+                          placeholder="Ex: João da Silva"
+                          className="w-full h-9.5 pl-9 pr-3.5 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all"
+                        />
+                      </div>
                     </div>
 
-                    <div className="relative">
-                      <PhoneInput
-                        value={telefone}
-                        onChange={(val) => setTelefone(val)}
-                        required
-                        placeholder="11 99999-8888"
-                      />
+                    {/* Email Field (MANDATORY for New Client Registration) */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-[#A1A1AA] flex items-center justify-between">
+                        <span className="flex items-center gap-1">
+                          <Mail size={12} className="text-[#D4AF37]" /> E-mail de Confirmação
+                        </span>
+                      </label>
+                      <div className="relative flex items-center h-9.5 w-full">
+                        <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#71717A] pointer-events-none shrink-0 z-10" />
+                        <input
+                          type="email"
+                          required
+                          maxLength={100}
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          onFocus={handleFocusScroll}
+                          placeholder="Ex: contato@empresa.com.br"
+                          className="w-full h-9.5 pl-9 pr-3.5 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all"
+                        />
+                      </div>
                     </div>
                   </div>
 
-                  {/* Device Name Field */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-[#A1A1AA] flex items-center gap-1.5">
-                      <Smartphone size={14} className="text-[#D4AF37]" /> Identificador do Aparelho
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      maxLength={60}
-                      value={nomeDispositivo}
-                      onChange={(e) => setNomeDispositivo(e.target.value)}
-                      placeholder="Ex: Celular Corporativo"
-                      className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all"
-                    />
+                  {/* Grid 2: CNPJ & WhatsApp */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* CNPJ Field */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-[#A1A1AA] flex items-center gap-1">
+                        <Building2 size={12} className="text-[#D4AF37]" /> CNPJ do Cliente/Empresa
+                      </label>
+                      <div className="relative flex items-center h-9.5 w-full">
+                        <Building2 size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#71717A] pointer-events-none shrink-0 z-10" />
+                        <input
+                          type="text"
+                          required
+                          maxLength={20}
+                          value={cnpj}
+                          onChange={(e) => setCnpj(e.target.value)}
+                          onFocus={handleFocusScroll}
+                          placeholder="Ex: 45.678.910/0001-23"
+                          className="w-full h-9.5 pl-9 pr-3.5 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Dynamic SIM card Phone Field */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between items-center h-[17px]">
+                        <label className="text-[11px] font-semibold text-[#A1A1AA] flex items-center gap-1">
+                          <Phone size={12} className="text-[#D4AF37]" /> Telefone / WhatsApp
+                        </label>
+                        
+                        {isDetectingPhone ? (
+                          <span className="text-[9px] text-amber-400 flex items-center gap-0.5 font-semibold animate-pulse">
+                            <Radio size={10} className="animate-spin text-amber-500" />
+                            SIM...
+                          </span>
+                        ) : phoneDetected ? (
+                          <span className="text-[8px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded-full font-mono font-bold flex items-center gap-0.5 animate-pulse">
+                            <CheckCircle2 size={8} />
+                            SIM1
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <div className="relative h-9.5">
+                        <PhoneInput
+                          value={telefone}
+                          onChange={(val) => setTelefone(val)}
+                          required
+                          placeholder="11 99999-8888"
+                          className="h-9.5 text-xs rounded-xl"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Grid 3: Senha & Identificador de Aparelho */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Password Field */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-[#A1A1AA] flex items-center gap-1">
+                        <Key size={12} className="text-[#D4AF37]" /> Senha de Acesso
+                      </label>
+                      <div className="relative flex items-center h-9.5 w-full">
+                        <Key size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#71717A] pointer-events-none shrink-0 z-10" />
+                        <input
+                          type={showSenha ? 'text' : 'password'}
+                          required
+                          maxLength={128}
+                          value={senha}
+                          onChange={(e) => setSenha(e.target.value)}
+                          onFocus={handleFocusScroll}
+                          placeholder="••••••••"
+                          className="w-full h-9.5 pl-9 pr-9 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowSenha(!showSenha)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-[#71717A] hover:text-[#D4AF37] transition-colors p-1 cursor-pointer"
+                          title={showSenha ? 'Ocultar senha' : 'Exibir senha'}
+                        >
+                          {showSenha ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Device Name Field */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-semibold text-[#A1A1AA] flex items-center gap-1">
+                        <Smartphone size={12} className="text-[#D4AF37]" /> Identificador do Aparelho
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        maxLength={60}
+                        value={nomeDispositivo}
+                        onChange={(e) => setNomeDispositivo(e.target.value)}
+                        placeholder="Ex: Celular Corporativo"
+                        className="w-full h-9.5 px-3 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all"
+                      />
+                    </div>
                   </div>
 
                   {/* Device UUID section */}
-                  <div className="bg-[#18181B]/50 p-3 rounded-xl border border-[#27272A]/80 space-y-1">
+                  <div className="bg-[#18181B]/40 p-2 rounded-xl border border-[#27272A]/60 space-y-0.5">
                     <div className="flex justify-between items-center">
-                      <span className="text-[10px] text-[#71717A] font-bold uppercase tracking-wider">UUID do Dispositivo</span>
+                      <span className="text-[9px] text-[#71717A] font-bold uppercase tracking-wider">UUID do Dispositivo</span>
                       <button
                         type="button"
                         onClick={handleCopyUuid}
-                        className="text-[10px] text-[#D4AF37] hover:text-[#E5C158] flex items-center gap-1 cursor-pointer transition-colors"
+                        className="text-[9px] text-[#D4AF37] hover:text-[#E5C158] flex items-center gap-1 cursor-pointer transition-colors"
                       >
-                        {isCopied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                        {isCopied ? <Check size={10} className="text-emerald-400" /> : <Copy size={10} />}
                         <span>{isCopied ? 'Copiado!' : 'Copiar'}</span>
                       </button>
                     </div>
-                    <p className="text-[10px] font-mono text-[#A1A1AA] truncate">
+                    <p className="text-[9px] font-mono text-[#A1A1AA] truncate">
                       {deviceUuid}
                     </p>
                   </div>
@@ -847,24 +893,24 @@ export const LockScreen: React.FC<LockScreenProps> = ({
               )}
 
               {/* Submit Button: Strictly dependent on formMode to avoid crowded triggers */}
-              <div className="pt-2">
+              <div className="pt-1">
                 {formMode === 'LOGIN' ? (
                   <button
                     type="submit"
                     disabled={loading}
-                    className="w-full bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A0A0B] py-3 rounded-xl text-xs font-bold uppercase tracking-wider shadow-lg shadow-[#D4AF37]/10 transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50"
+                    className="w-full bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A0A0B] py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider shadow-lg shadow-[#D4AF37]/10 transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-95 disabled:opacity-50"
                   >
-                    {loading ? <Loader2 size={14} className="animate-spin" /> : <Lock size={14} />}
+                    {loading ? <Loader2 size={13} className="animate-spin" /> : <Lock size={13} />}
                     <span>Entrar no Sistema</span>
                   </button>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <button
                       type="submit"
                       disabled={loading}
-                      className="w-full bg-gradient-to-r from-[#D4AF37] to-[#E5C158] hover:opacity-95 text-[#0A0A0B] py-3 rounded-xl text-xs font-bold uppercase tracking-wider shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50"
+                      className="w-full bg-gradient-to-r from-[#D4AF37] to-[#E5C158] hover:opacity-95 text-[#0A0A0B] py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider shadow-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-95 disabled:opacity-50"
                     >
-                      {loading ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                      {loading ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
                       <span>Cadastrar e Ativar Cliente</span>
                     </button>
 
@@ -873,10 +919,10 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                         type="button"
                         onClick={handleRequestAccess}
                         disabled={loading}
-                        className="w-full bg-[#18181B] hover:bg-[#27272A] text-white border border-[#27272A] py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                        className="w-full bg-[#18181B] hover:bg-[#27272A] text-white border border-[#27272A] py-2.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
                       >
                         <span>Solicitar Homologação de Terminal</span>
-                        <ArrowRight size={14} />
+                        <ArrowRight size={13} />
                       </button>
                     )}
                   </div>
@@ -885,13 +931,13 @@ export const LockScreen: React.FC<LockScreenProps> = ({
             </form>
 
             {/* Segmented control toggle at bottom to avoid unrequested visual clutter */}
-            <div className="pt-4 border-t border-[#27272A] flex flex-col space-y-3.5">
+            <div className="pt-3 border-t border-[#27272A] flex flex-col space-y-2">
               
               {formMode === 'LOGIN' ? (
                 <button
                   type="button"
                   onClick={() => setFormMode('REGISTER')}
-                  className="w-full py-2 bg-[#18181B]/40 hover:bg-[#18181B] border border-[#27272A] rounded-xl text-xs font-semibold text-[#A1A1AA] hover:text-white transition-all cursor-pointer flex items-center justify-center gap-2"
+                  className="w-full py-1.5 bg-[#18181B]/40 hover:bg-[#18181B] border border-[#27272A] rounded-lg text-xs font-semibold text-[#A1A1AA] hover:text-white transition-all cursor-pointer flex items-center justify-center gap-1.5"
                 >
                   <span>Não possui cadastro? Cadastrar Novo Cliente</span>
                 </button>
@@ -899,7 +945,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                 <button
                   type="button"
                   onClick={() => setFormMode('LOGIN')}
-                  className="w-full py-2 bg-[#18181B]/40 hover:bg-[#18181B] border border-[#27272A] rounded-xl text-xs font-semibold text-[#A1A1AA] hover:text-white transition-all cursor-pointer flex items-center justify-center gap-2"
+                  className="w-full py-1.5 bg-[#18181B]/40 hover:bg-[#18181B] border border-[#27272A] rounded-lg text-xs font-semibold text-[#A1A1AA] hover:text-white transition-all cursor-pointer flex items-center justify-center gap-1.5"
                 >
                   <span>Já possui cadastro? Entrar com Senha</span>
                 </button>

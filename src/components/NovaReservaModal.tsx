@@ -1,12 +1,18 @@
-import React, { useState, useMemo } from 'react';
-import { Cliente, ItemAcervo, StatusReserva } from '../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Cliente, ItemAcervo, StatusReserva, ReservaComItens, EmpresaConfig } from '../types';
 import { formatarMoeda } from '../utils/whatsappTemplates';
-import { Calendar, User, Package, AlertTriangle, CheckCircle, Globe, Filter } from 'lucide-react';
+import { formatCurrencyBRL, parseCurrencyBRLToNumber } from '../utils/currencyMask';
+import { Calendar, User, Package, AlertTriangle, CheckCircle, Globe, Filter, MapPin } from 'lucide-react';
 import { PhoneInput } from './PhoneInput';
+import { calcularDistanciaRealOuSimulada, calcularValorFrete } from '../utils/freteUtils';
+import { EnderecoFormFields } from './EnderecoFormFields';
+import { formatEnderecoCompleto, parseEnderecoCompleto, AddressData } from '../utils/addressUtils';
 
 interface NovaReservaModalProps {
   clientes: Cliente[];
   itens: ItemAcervo[];
+  reservas?: ReservaComItens[];
+  empresaConfig?: EmpresaConfig;
   onClose: () => void;
   onSaveReserva: (reservaData: {
     clienteId?: number;
@@ -15,14 +21,68 @@ interface NovaReservaModalProps {
     dataDevolucao: number;
     status: StatusReserva;
     manualCliente?: { nome: string; telefone: string };
+    endereco?: string; // NOVO: Local do Evento / Entrega
+    valorFrete?: number;
+    distanciaKm?: number;
+    valorFretePorKm?: number;
   }) => void;
 }
 
-export const NovaReservaModal: React.FC<NovaReservaModalProps> = ({ clientes = [], itens = [], onClose, onSaveReserva }) => {
+export const NovaReservaModal: React.FC<NovaReservaModalProps> = ({ clientes = [], itens = [], reservas = [], empresaConfig, onClose, onSaveReserva }) => {
   const [clienteMode, setClienteMode] = useState<'cadastrado' | 'manual'>('cadastrado');
   const [selectedClienteId, setSelectedClienteId] = useState<number>(clientes[0]?.id || 0);
   const [manualNome, setManualNome] = useState<string>('');
   const [manualTelefone, setManualTelefone] = useState<string>('');
+  const [addressData, setAddressData] = useState<AddressData>({
+    logradouro: '',
+    numero: '',
+    bairro: '',
+    cidade: '',
+    estado: '',
+    cep: '',
+  });
+  const [endereco, setEndereco] = useState<string>(''); // NOVO: Local do Evento / Entrega
+
+  // Auto populate address when selecting a registered client
+  useEffect(() => {
+    if (clienteMode === 'cadastrado' && selectedClienteId) {
+      const selected = clientes.find((c) => c.id === Number(selectedClienteId));
+      if (selected) {
+        const clientAddr = (selected.logradouro || selected.cidade || selected.bairro)
+          ? {
+              logradouro: selected.logradouro || '',
+              numero: selected.numero || '',
+              bairro: selected.bairro || '',
+              cidade: selected.cidade || '',
+              estado: selected.estado || '',
+              cep: selected.cep || '',
+            }
+          : parseEnderecoCompleto(selected.endereco);
+
+        setAddressData(clientAddr);
+        setEndereco(formatEnderecoCompleto(clientAddr));
+      }
+    }
+  }, [selectedClienteId, clienteMode, clientes]);
+
+  // Freight States
+  const [distanciaKm, setDistanciaKm] = useState<number>(0);
+  const [valorFrete, setValorFrete] = useState<number>(0);
+  const [valorFretePorKm, setValorFretePorKm] = useState<number>(empresaConfig?.valorFretePorKm || 0);
+  const [calculandoFrete, setCalculandoFrete] = useState<boolean>(false);
+
+  // Sync with company config value when it changes
+  useEffect(() => {
+    if (empresaConfig?.valorFretePorKm !== undefined) {
+      setValorFretePorKm(empresaConfig.valorFretePorKm);
+    }
+  }, [empresaConfig]);
+
+  // Recalculate freight cost when distance or rate per km changes
+  useEffect(() => {
+    const calculated = calcularValorFrete(distanciaKm, valorFretePorKm);
+    setValorFrete(calculated);
+  }, [distanciaKm, valorFretePorKm]);
 
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
   const [selectedCategoria, setSelectedCategoria] = useState<string>('Todas');
@@ -63,22 +123,43 @@ export const NovaReservaModal: React.FC<NovaReservaModalProps> = ({ clientes = [
   const diffTime = Math.max(0, tDevolucao - tRetirada);
   const diasReserva = isSameDay ? 1 : Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
 
-  // Helper to calculate the kit's real-time dynamic stock based on its components
+  // Contagem de unidades comprometidas em outras reservas ativas no mesmo período temporal
+  const getReservedCountInPeriod = (itemId: number): number => {
+    if (!reservas || reservas.length === 0) return 0;
+    return reservas.reduce((count, r) => {
+      if (r.reserva.status === StatusReserva.CANCELADA || r.reserva.status === StatusReserva.CONCLUIDA) {
+        return count;
+      }
+      // Interseção temporal de intervalos: (A_start < B_end) && (A_end > B_start)
+      const overlap = r.reserva.dataRetirada < tDevolucao && r.reserva.dataDevolucao > tRetirada;
+      if (overlap) {
+        const itemMatches = r.itens.filter((i) => i.id === itemId).length;
+        return count + itemMatches;
+      }
+      return count;
+    }, 0);
+  };
+
+  // Helper to calculate the kit's real-time dynamic stock based on its components and period availability
   const getEffectiveStock = (item: ItemAcervo) => {
     if (item.isKit && item.kitComponentes && item.kitComponentes.length > 0) {
       const capacities = item.kitComponentes.map((comp) => {
         const compItem = itens.find((i) => i.id === comp.itemId);
         if (!compItem) return 0;
-        return Math.floor(compItem.quantidadeTotal / comp.quantidade);
+        const reservedComp = getReservedCountInPeriod(compItem.id);
+        const availStock = Math.max(0, compItem.quantidadeTotal - reservedComp);
+        return Math.floor(availStock / comp.quantidade);
       });
       return Math.min(...capacities);
     }
-    return item.quantidadeTotal;
+    const reserved = getReservedCountInPeriod(item.id);
+    return Math.max(0, item.quantidadeTotal - reserved);
   };
 
   // Selected items total
   const selectedItems = itens.filter((i) => selectedItemIds.includes(i.id));
-  const valorTotal = selectedItems.reduce((acc, curr) => acc + curr.precoAluguel, 0) * diasReserva;
+  const valorTotalSemFrete = selectedItems.reduce((acc, curr) => acc + curr.precoAluguel, 0) * diasReserva;
+  const valorTotal = valorTotalSemFrete + valorFrete;
 
   const toggleItemSelection = (item: ItemAcervo) => {
     setErrorMessage(null);
@@ -145,6 +226,10 @@ export const NovaReservaModal: React.FC<NovaReservaModalProps> = ({ clientes = [
       dataDevolucao: tDevolucao,
       status: StatusReserva.CONFIRMADA,
       manualCliente: clienteMode === 'manual' ? { nome: manualNome, telefone: manualTelefone } : undefined,
+      endereco: endereco || undefined, // NOVO: Passa o endereço inserido
+      valorFrete: valorFrete || undefined,
+      distanciaKm: distanciaKm || undefined,
+      valorFretePorKm: valorFretePorKm || undefined,
     });
   };
 
@@ -269,6 +354,104 @@ export const NovaReservaModal: React.FC<NovaReservaModalProps> = ({ clientes = [
                   className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none"
                 />
               </div>
+            </div>
+
+            {/* Local do Evento / Endereço de Entrega */}
+            <div className="bg-[#18181C] p-3.5 rounded-xl border border-[#27272A]">
+              <EnderecoFormFields
+                value={addressData}
+                onChange={(newAddr) => {
+                  setAddressData(newAddr);
+                  setEndereco(formatEnderecoCompleto(newAddr));
+                }}
+                onFocus={handleFocusScroll}
+                labelPrefix="Local do Evento"
+              />
+            </div>
+
+            {/* Painel de Cálculo de Frete Integrado */}
+            <div className="bg-[#18181B] border border-[#27272A] p-4 rounded-xl space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-[#27272A]">
+                <div className="flex items-center gap-2">
+                  <MapPin size={16} className="text-[#D4AF37]" />
+                  <span className="text-xs font-bold text-white uppercase tracking-wider">Cálculo de Frete Automatizado</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!endereco?.trim()) {
+                      setErrorMessage('Por favor, digite um endereço no campo acima primeiro.');
+                      return;
+                    }
+                    setCalculandoFrete(true);
+                    setErrorMessage(null);
+                    try {
+                      const res = await calcularDistanciaRealOuSimulada(
+                        empresaConfig?.enderecoCompleto || 'Rua das Flores, 100 - São Paulo, SP',
+                        endereco,
+                        empresaConfig?.googleMapsApiKey
+                      );
+                      setDistanciaKm(res.distanciaKm);
+                      const frete = calcularValorFrete(res.distanciaKm, valorFretePorKm);
+                      setValorFrete(frete);
+                    } catch (err) {
+                      setErrorMessage('Erro ao calcular deslocamento no Google Maps.');
+                    } finally {
+                      setCalculandoFrete(false);
+                    }
+                  }}
+                  disabled={calculandoFrete || !endereco?.trim()}
+                  className="px-4 py-1.5 bg-[#D4AF37] hover:bg-[#E5C158] text-black text-[11px] font-bold rounded-lg transition-all disabled:opacity-50 flex items-center gap-1 cursor-pointer"
+                >
+                  {calculandoFrete ? 'Calculando...' : 'Calcular Deslocamento'}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-[#E4E4E7]">
+                <div>
+                  <label className="block text-[10px] text-[#A1A1AA] mb-1 uppercase tracking-wider font-semibold">Valor por Km (R$/Km)</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="R$ 0,00"
+                    value={formatCurrencyBRL(valorFretePorKm)}
+                    onChange={(e) => {
+                      const rate = parseCurrencyBRLToNumber(e.target.value);
+                      setValorFretePorKm(rate);
+                    }}
+                    className="w-full px-3 py-2 bg-[#111113] border border-[#27272A] rounded-lg text-white font-mono focus:border-[#D4AF37] focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] text-[#A1A1AA] mb-1 uppercase tracking-wider font-semibold">Distância de Ida (Km)</label>
+                  <div className="w-full px-3 py-2 bg-[#111113] border border-[#27272A] rounded-lg text-white font-mono flex items-center justify-between">
+                    <span>{distanciaKm}</span>
+                    <span className="text-[#71717A] text-[10px]">Km</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] text-[#A1A1AA] mb-1 uppercase tracking-wider font-semibold">Custo do Frete</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="R$ 0,00"
+                    value={formatCurrencyBRL(valorFrete)}
+                    onChange={(e) => {
+                      const cost = parseCurrencyBRLToNumber(e.target.value);
+                      setValorFrete(cost);
+                    }}
+                    className="w-full px-3 py-2 bg-[#111113] border border-[#27272A] rounded-lg text-emerald-400 font-mono font-bold focus:border-[#D4AF37] focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {distanciaKm > 0 && (
+                <p className="text-[10px] text-[#71717A] leading-normal">
+                  * Deslocamento baseado no endereço da empresa (<span className="italic">{empresaConfig?.enderecoCompleto || 'Rua das Flores, 100 - São Paulo, SP'}</span>) até o local do evento.
+                </p>
+              )}
             </div>
 
             {/* Same-day Time Pickers */}

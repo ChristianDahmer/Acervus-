@@ -11,8 +11,8 @@ export interface ValidationResult {
 }
 
 export interface IntentAnalysisResult {
-  intent: 'NAVEGACAO' | 'DUVIDA_FAQ' | 'CRIAÇÃO_RESERVA' | 'BUSCA_ACERVO' | 'GERAL';
-  targetTab?: 'inventario' | 'reservas' | 'manutencao' | 'relatorios' | 'empresa';
+  intent: 'NAVEGACAO' | 'DUVIDA_FAQ' | 'CRIAÇÃO_RESERVA' | 'BUSCA_ACERVO' | 'INSIGHT_FINANCEIRO' | 'MANUTENCAO' | 'GERAL';
+  targetTab?: 'inventario' | 'reservas' | 'clientes' | 'financeiro' | 'manutencao' | 'relatorios' | 'formularios_web' | 'empresa';
   answer?: string;
   extractedReservation?: {
     clienteNome?: string;
@@ -20,6 +20,7 @@ export interface IntentAnalysisResult {
     dataFim?: string;
     itensSugeridos?: string[];
   };
+  actionSuggestions?: string[];
   confidence: number;
   explanation: string;
 }
@@ -98,39 +99,42 @@ export function validateAndPredictCPF(input: string): ValidationResult {
 
 export function validateAndPredictCNPJ(input: string): ValidationResult {
   const startTime = performance.now();
-  const digits = input.replace(/\D/g, '');
+  const clean = (input || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
 
-  if (digits.length === 0) {
+  if (clean.length === 0) {
     return {
       isValid: false,
-      message: 'Insira os 14 dígitos do CNPJ.',
+      message: 'Insira os 14 caracteres do CNPJ (Numérico ou Alfanumérico IN RFB 2229/2024).',
       confidence: 1.0,
       engineUsed: 'LOCAL_NATIVE_HEURISTIC',
       latencyMs: Math.round(performance.now() - startTime)
     };
   }
 
-  let formatted = digits;
-  if (digits.length <= 2) {
-    formatted = digits;
-  } else if (digits.length <= 5) {
-    formatted = `${digits.slice(0, 2)}.${digits.slice(2)}`;
-  } else if (digits.length <= 8) {
-    formatted = `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5)}`;
-  } else if (digits.length <= 12) {
-    formatted = `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8)}`;
+  let formatted = clean;
+  if (clean.length <= 2) {
+    formatted = clean;
+  } else if (clean.length <= 5) {
+    formatted = `${clean.slice(0, 2)}.${clean.slice(2)}`;
+  } else if (clean.length <= 8) {
+    formatted = `${clean.slice(0, 2)}.${clean.slice(2, 5)}.${clean.slice(5)}`;
+  } else if (clean.length <= 12) {
+    formatted = `${clean.slice(0, 2)}.${clean.slice(2, 5)}.${clean.slice(5, 8)}/${clean.slice(8)}`;
   } else {
-    formatted = `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12, 14)}`;
+    formatted = `${clean.slice(0, 2)}.${clean.slice(2, 5)}.${clean.slice(5, 8)}/${clean.slice(8, 12)}-${clean.slice(12, 14)}`;
   }
 
-  const isValid = digits.length === 14;
+  const isAlpha = /[A-Z]/.test(clean.substring(0, 12));
+  const isValidLength = clean.length === 14;
 
   return {
-    isValid,
+    isValid: isValidLength,
     formattedValue: formatted,
-    suggestion: digits.length === 14 ? formatted : undefined,
-    message: isValid ? '✓ CNPJ com estrutura válida' : `Preenchendo: ${digits.length}/14 dígitos`,
-    confidence: isValid ? 0.98 : 0.50,
+    suggestion: isValidLength ? formatted : undefined,
+    message: isValidLength 
+      ? `✓ CNPJ ${isAlpha ? 'Alfanumérico (IN RFB 2.229/2024)' : 'Tradicional'} com estrutura válida` 
+      : `Preenchendo: ${clean.length}/14 caracteres`,
+    confidence: isValidLength ? 0.98 : 0.50,
     engineUsed: 'GEMINI_NANO_EMULATED',
     latencyMs: Math.round(performance.now() - startTime) + 8
   };
@@ -268,6 +272,89 @@ export function analyzeUserIntent(query: string, currentTab?: string): IntentAna
   };
 }
 
+// Chamada assíncrona ao servidor Gemini 3.7 Flash com context-awareness e fallback local de alta velocidade
+export async function analyzeUserIntentAsync(
+  query: string,
+  currentTab?: string,
+  history?: Array<{ sender: string; text: string }>,
+  systemStats?: Record<string, any>
+): Promise<IntentAnalysisResult> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    const response = await fetch('/api/gemini/assistant', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        query,
+        currentTab,
+        history,
+        systemStats
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.answer) {
+        return {
+          intent: data.intent || 'GERAL',
+          targetTab: data.targetTab || undefined,
+          answer: data.answer,
+          extractedReservation: data.extractedReservation || undefined,
+          actionSuggestions: data.actionSuggestions || undefined,
+          confidence: typeof data.confidence === 'number' ? data.confidence : 0.98,
+          explanation: data.explanation || 'Processado pelo modelo Google Gemini 3.7 Flash com inteligência contextual.'
+        };
+      }
+    }
+  } catch (err) {
+    console.info('[AI Engine] Utilizando fallback heurístico nativo:', err);
+  }
+
+  // Fallback para o motor local heurístico instantâneo
+  return analyzeUserIntent(query, currentTab);
+}
+
+// Geração de Relatórios Executivos e BI Preditivo com Gemini 3.7 Flash
+export async function generateBusinessInsightsAsync(
+  tenantId: string,
+  stockData: any[],
+  bookingsData: any[],
+  financialData: Record<string, any>
+): Promise<string> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+    const response = await fetch('/api/gemini/business-insights', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenantId, stockData, bookingsData, financialData }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.report) {
+        return data.report;
+      }
+    }
+    throw new Error('Falha ao obter relatório executivo da IA.');
+  } catch (err: any) {
+    return `### Relatório Executivo Local (Contingência)
+- **Status Geral:** Operação estável com ${stockData.length} itens monitorados e ${bookingsData.length} reservas registradas.
+- **Dica:** Ative conexão com a internet para obter o diagnóstico preditivo completo com o Gemini 3.7 Flash.`;
+  }
+}
+
 // ----------------------------------------------------------------------
 // 3. ASSISTENTE DE NAVEGAÇÃO & DICAS CONTEXTUAIS (ONBOARDING ATIVO)
 // ----------------------------------------------------------------------
@@ -335,8 +422,10 @@ export function getScreenContextTips(currentTab: string): ContextualTip[] {
 }
 
 // ----------------------------------------------------------------------
-// 4. SUPORTE A RECONHECIMENTO E SÍNTESE DE VOZ (WEB SPEECH API AVANÇADA)
+// 4. SUPORTE A RECONHECIMENTO E SÍNTESE DE VOZ (GEMINI NEURAL TTS & WEB SPEECH)
 // ----------------------------------------------------------------------
+
+export type GeminiVoiceName = 'Kore' | 'Puck' | 'Zephyr' | 'Fenrir' | 'Charon';
 
 export interface VoiceSettings {
   voiceURI: string | null;
@@ -345,6 +434,9 @@ export interface VoiceSettings {
   volume: number; // 0 to 1
   conciseMode: boolean;
   autoSpeak: boolean;
+  useNeuralGemini: boolean; // Utilizar Gemini 3.1 Flash TTS Neural Speech
+  geminiVoiceName: GeminiVoiceName;
+  neuralTone: 'professional' | 'cheerful';
 }
 
 const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
@@ -353,8 +445,15 @@ const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   pitch: 1.0,
   volume: 1.0,
   conciseMode: true,
-  autoSpeak: true
+  autoSpeak: true,
+  useNeuralGemini: true,
+  geminiVoiceName: 'Kore',
+  neuralTone: 'professional',
 };
+
+// Global audio context for Gemini Neural TTS playback
+let activeAudioCtx: AudioContext | null = null;
+let activeAudioSource: AudioBufferSourceNode | null = null;
 
 export function getVoiceSettings(): VoiceSettings {
   if (typeof window === 'undefined') return DEFAULT_VOICE_SETTINGS;
@@ -425,8 +524,22 @@ export function startVoiceRecognition(
 }
 
 export function stopSpeech(): void {
+  // Para Web Speech API
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     window.speechSynthesis.cancel();
+  }
+  // Para Gemini Neural Audio Context
+  if (activeAudioSource) {
+    try {
+      activeAudioSource.stop();
+    } catch (_) {}
+    activeAudioSource = null;
+  }
+  if (activeAudioCtx && activeAudioCtx.state !== 'closed') {
+    try {
+      activeAudioCtx.close();
+    } catch (_) {}
+    activeAudioCtx = null;
   }
 }
 
@@ -477,20 +590,102 @@ export function sanitizeTextForNaturalSpeech(text: string, concise: boolean = tr
   return clean;
 }
 
-export function speakText(
+// Reprodução de áudio PCM 24kHz retornado pelo Gemini Neural TTS
+export async function playPcmBase64Audio(
+  base64Data: string,
+  sampleRate: number = 24000,
+  onStart?: () => void,
+  onEnd?: () => void
+): Promise<void> {
+  stopSpeech();
+
+  try {
+    const binaryString = window.atob(base64Data);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    const int16Array = new Int16Array(bytes.buffer);
+    const float32Array = new Float32Array(int16Array.length);
+    for (let i = 0; i < int16Array.length; i++) {
+      float32Array[i] = int16Array[i] / 32768.0;
+    }
+
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    activeAudioCtx = new AudioContextClass({ sampleRate });
+
+    const audioBuffer = activeAudioCtx.createBuffer(1, float32Array.length, sampleRate);
+    audioBuffer.getChannelData(0).set(float32Array);
+
+    const source = activeAudioCtx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(activeAudioCtx.destination);
+    activeAudioSource = source;
+
+    source.onended = () => {
+      activeAudioSource = null;
+      if (onEnd) onEnd();
+    };
+
+    if (onStart) onStart();
+    source.start();
+  } catch (err) {
+    console.error('Falha ao decodificar/reproduzir PCM Neural:', err);
+    if (onEnd) onEnd();
+  }
+}
+
+// Síntese de Voz Unificada (Gemini Neural TTS com fallback automático para Web Speech API)
+export async function speakText(
   text: string,
   customSettings?: Partial<VoiceSettings>,
   onStart?: () => void,
   onEnd?: () => void
-): void {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-  
-  // Barge-in imediato: para qualquer fala em andamento
+): Promise<void> {
   stopSpeech();
 
   const settings = { ...getVoiceSettings(), ...customSettings };
   const formattedText = sanitizeTextForNaturalSpeech(text, settings.conciseMode);
   if (!formattedText) return;
+
+  // Se Gemini Neural TTS estiver habilitado, tenta gerar áudio no servidor
+  if (settings.useNeuralGemini) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+      const response = await fetch('/api/gemini/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: formattedText,
+          voiceName: settings.geminiVoiceName,
+          tone: settings.neuralTone,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.audioBase64) {
+          await playPcmBase64Audio(data.audioBase64, data.sampleRate || 24000, onStart, onEnd);
+          return;
+        }
+      }
+    } catch (err) {
+      console.info('[TTS] Fallback para Web Speech API local:', err);
+    }
+  }
+
+  // Fallback para Web Speech API local do navegador
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+    if (onEnd) onEnd();
+    return;
+  }
 
   const utterance = new SpeechSynthesisUtterance(formattedText);
   utterance.lang = 'pt-BR';
@@ -498,7 +693,6 @@ export function speakText(
   utterance.pitch = settings.pitch;
   utterance.volume = settings.volume;
 
-  // Seleciona a voz configurada ou a melhor disponível
   const voices = getAvailablePtVoices();
   if (voices.length > 0) {
     if (settings.voiceURI) {
@@ -510,14 +704,207 @@ export function speakText(
     }
   }
 
-  if (onStart) {
-    utterance.onstart = () => onStart();
-  }
-
+  if (onStart) utterance.onstart = () => onStart();
   if (onEnd) {
     utterance.onend = () => onEnd();
     utterance.onerror = () => onEnd();
   }
 
   window.speechSynthesis.speak(utterance);
+}
+
+// ----------------------------------------------------------------------
+// 5. EXTENSÃO: CONSULTOR DE DECORAÇÃO & RECOMENDAÇÃO DE KITS COM GEMINI
+// ----------------------------------------------------------------------
+
+export interface DecorAdvisorResponse {
+  temaFormatado: string;
+  conceitoEstetico: string;
+  paletaSugerida: string[];
+  itensRecomendados: Array<{
+    categoria: string;
+    nomeItem: string;
+    quantidadeSugerida: number;
+    justificativa: string;
+    sugeridoDoEstoque?: boolean;
+  }>;
+  dicasCenografia: string[];
+  estimativaPrecoSugeridoTotal?: string;
+}
+
+export async function askDecorAdvisorAsync(params: {
+  temaEvento: string;
+  numConvidados?: number;
+  tipoEspaco?: string;
+  paletaCores?: string;
+  itensDisponiveis?: any[];
+}): Promise<DecorAdvisorResponse> {
+  const response = await fetch('/api/gemini/decor-advisor', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    throw new Error('Falha ao consultar o Consultor de Decoração Gemini.');
+  }
+
+  return response.json();
+}
+
+// ----------------------------------------------------------------------
+// 6. EXTENSÃO: VISTORIA VISUAL DE AVARIAS COM VISÃO COMPUTACIONAL
+// ----------------------------------------------------------------------
+
+export interface DamageInspectionResponse {
+  possuiAvaria: boolean;
+  classificacaoGravidade: 'NENHUM_DANO' | 'LEVE' | 'MODERADO' | 'GRAVE';
+  descricaoAvaria: string;
+  areaAfetada?: string;
+  acaoRecomendada: string;
+  custoEstimadoReparo?: string;
+  retencaoCaucaoSugerida?: string;
+  necessitaBloqueioEstoque?: boolean;
+  laudoPericial: string;
+}
+
+export async function inspectDamageAsync(params: {
+  imageBase64: string;
+  itemNome?: string;
+  valorCaucao?: string;
+  valorItem?: string;
+}): Promise<DamageInspectionResponse> {
+  const response = await fetch('/api/gemini/inspect-damage', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    throw new Error('Falha ao realizar vistoria pericial de imagem.');
+  }
+
+  return response.json();
+}
+
+// ----------------------------------------------------------------------
+// 7. EXTENSÃO: GERAÇÃO DE MENSAGENS COMERCIAIS PARA WHATSAPP
+// ----------------------------------------------------------------------
+
+export async function generateWhatsAppPitchAsync(params: {
+  clienteNome: string;
+  itens: any[];
+  valorTotal: string;
+  dataEvento?: string;
+  tipoTom?: string;
+  linkProposta?: string;
+}): Promise<string> {
+  const response = await fetch('/api/gemini/whatsapp-pitch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    throw new Error('Falha ao gerar proposta comercial para WhatsApp.');
+  }
+
+  const data = await response.json();
+  return data.mensagemWhatsApp || '';
+}
+
+// ----------------------------------------------------------------------
+// 8. EXTENSÃO: REALCE E MELHORIA DE FOTOGRAFIAS, CENOGRAFIA E ELEMENTOS COM GEMINI
+// ----------------------------------------------------------------------
+
+export type PhotoEnhanceMode = 'studio' | 'event_staging' | 'hdr_vibrant' | 'clean_background' | 'scenic_custom';
+
+export type CenarioFundoType =
+  | 'jardim_por_do_sol'
+  | 'salao_imperial'
+  | 'boho_chic'
+  | 'black_tie'
+  | 'estudio_minimalista'
+  | 'praia_tropical'
+  | 'custom';
+
+export interface ScenicPromptAnalysis {
+  fundoSugeridoId: CenarioFundoType;
+  fundoSugeridoNome: string;
+  fundoDescricaoDetalhada: string;
+  elementosDecorativosSugeridos: string[];
+  estiloIluminacao: string;
+  paletaCores: string[];
+  promptComposicaoCompleta: string;
+  dicasCuradoria: string[];
+}
+
+export interface PhotoAuditResult {
+  scoreQualidade: number; // 0 - 100
+  apeloComercial: 'EXCELENTE' | 'BOM' | 'REGULAR' | 'NECESSITA_MELHORIA';
+  diagnosticoIluminacao: string;
+  diagnosticoEnquadramento?: string;
+  diagnosticoNitidez: string;
+  destaquesPositivos?: string[];
+  dicasParaFotografia: string[];
+  resumoMelhoriaAplicada: string;
+  analiseCenografia?: string;
+  elementosCriados?: string[];
+}
+
+export interface PhotoEnhanceResponse {
+  enhancedImageUrl: string;
+  wasImageTransformed: boolean;
+  modeApplied: PhotoEnhanceMode;
+  itemNome: string;
+  cenarioFundoAplicado?: string;
+  elementosAdicionados?: string[];
+  audit: PhotoAuditResult;
+  notes?: string;
+  timestamp: number;
+}
+
+export async function generateScenicPromptAsync(params: {
+  itemNome: string;
+  descritivo?: string;
+  categoria?: string;
+  tipoEvento?: string;
+}): Promise<ScenicPromptAnalysis> {
+  const response = await fetch('/api/gemini/scenic-prompt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    throw new Error('Falha ao processar análise de descritivo e cenografia.');
+  }
+
+  return response.json();
+}
+
+export async function enhancePhotoAsync(params: {
+  imageBase64: string;
+  mode?: PhotoEnhanceMode;
+  itemNome?: string;
+  descritivoItem?: string;
+  cenarioFundo?: CenarioFundoType;
+  cenarioCustomText?: string;
+  elementosDecorativos?: string[];
+  elementosCustomText?: string;
+  estiloIluminacao?: string;
+  customPrompt?: string;
+  aspectRatio?: string;
+}): Promise<PhotoEnhanceResponse> {
+  const response = await fetch('/api/gemini/enhance-photo', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    throw new Error('Falha ao processar melhoria de fotografia com Gemini.');
+  }
+
+  return response.json();
 }

@@ -702,6 +702,7 @@ export const InstagramSorteioModule: React.FC<InstagramSorteioModuleProps> = ({ 
   const [showAuditModal, setShowAuditModal] = useState(false);
 
   // Meta Graph API Configuration States - synchronized from EmpresaConfig.instagramConfig
+  const [canalInstagram, setCanalInstagram] = useState(() => empresaConfig?.instagramConfig?.canalInstagram || '@acervus.core');
   const [apiClientId, setApiClientId] = useState(() => empresaConfig?.instagramConfig?.apiClientId || '410294810293810');
   const [apiClientSecret, setApiClientSecret] = useState(() => empresaConfig?.instagramConfig?.apiClientSecret || 'app_secret_7f8g9h1k2l3m4n5o6p');
   const [apiAccessToken, setApiAccessToken] = useState(() => empresaConfig?.instagramConfig?.apiAccessToken || 'EAAdF8aZA5b6MBO4pZC2ZC1ZA9V9XyMvZCpK68D3l16Xf83hK0y7yZAZBcZApZAJZB1ZCs9mZB3oZD');
@@ -725,6 +726,7 @@ export const InstagramSorteioModule: React.FC<InstagramSorteioModuleProps> = ({ 
   useEffect(() => {
     if (empresaConfig?.instagramConfig) {
       const cfg = empresaConfig.instagramConfig;
+      if (cfg.canalInstagram) setCanalInstagram(cfg.canalInstagram);
       if (cfg.apiClientId) setApiClientId(cfg.apiClientId);
       if (cfg.apiClientSecret) setApiClientSecret(cfg.apiClientSecret);
       if (cfg.apiAccessToken) setApiAccessToken(cfg.apiAccessToken);
@@ -1207,6 +1209,10 @@ export const InstagramSorteioModule: React.FC<InstagramSorteioModuleProps> = ({ 
 
               {/* Status parameters readout */}
               <div className="space-y-2 bg-[#18181B] p-3 rounded-xl border border-[#27272A] text-[11px] font-mono">
+                <div className="flex justify-between">
+                  <span className="text-[#71717A]">Canal Instagram:</span>
+                  <span className="text-pink-400 font-bold">{canalInstagram || '@acervus.core'}</span>
+                </div>
                 <div className="flex justify-between">
                   <span className="text-[#71717A]">App ID:</span>
                   <span className="text-white font-bold">{apiClientId || '410294810293810'}</span>
@@ -1723,7 +1729,7 @@ export const InstagramSorteioModule: React.FC<InstagramSorteioModuleProps> = ({ 
                 <span className="bg-emerald-500/10 text-emerald-400 text-[10px] font-mono font-bold px-2 py-0.5 rounded uppercase">POST /webhooks/instagram</span>
                 <h4 className="text-xs font-bold text-white font-mono">4. Webhook de Menção em Stories</h4>
                 <p className="text-[11px] text-[#A1A1AA] leading-relaxed">
-                  Recebe e processa eventos do tipo <code>instagram_mentions</code> quando um usuário publica um Story marcando <code>@suaconta</code>.
+                  Recebe e processa eventos do tipo <code>instagram_mentions</code> quando um usuário publica um Story marcando <code>{canalInstagram || '@suaconta'}</code>.
                 </p>
               </div>
 
@@ -1766,7 +1772,7 @@ export const InstagramSorteioModule: React.FC<InstagramSorteioModuleProps> = ({ 
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle2 size={14} className="text-emerald-400 shrink-0 mt-0.5" />
-                  <span><strong>Canal Fallback (In-App OCR):</strong> O participante envia o print no app. O motor <code>ML Kit Text Recognition</code> local processa o print e confirma <code>@suaconta</code> e timestamp &lt; 24h.</span>
+                  <span><strong>Canal Fallback (In-App OCR):</strong> O participante envia o print no app. O motor <code>ML Kit Text Recognition</code> local processa o print e confirma <code>{canalInstagram || '@suaconta'}</code> e timestamp &lt; 24h.</span>
                 </li>
               </ul>
             </div>

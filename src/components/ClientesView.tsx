@@ -32,9 +32,13 @@ import {
   LayoutGrid,
   List,
   Copy,
+  AlertTriangle,
 } from 'lucide-react';
 import { getAccessToken, googleSignIn, fetchGoogleContacts, createGoogleContact } from '../lib/googleWorkspace';
 import { StandardListControls, StandardPagination, StandardEmptyState } from './StandardListContainer';
+import { validarDocumento, formatarDocumento } from '../utils/documentValidation';
+import { EnderecoFormFields } from './EnderecoFormFields';
+import { formatEnderecoCompleto, parseEnderecoCompleto, AddressData } from '../utils/addressUtils';
 
 
 interface ClientesViewProps {
@@ -107,22 +111,24 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
 
   // Standard modal states (Create)
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [formDocError, setFormDocError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     nome: '',
     telefone: '',
     email: '',
     cpfCnpj: '',
-    endereco: '',
+    addressData: { logradouro: '', numero: '', bairro: '', cidade: '', estado: '', cep: '' } as AddressData,
     observacoes: '',
   });
 
   const handleOpenAdd = () => {
+    setFormDocError(null);
     setFormData({
       nome: '',
       telefone: '',
       email: '',
       cpfCnpj: '',
-      endereco: '',
+      addressData: { logradouro: '', numero: '', bairro: '', cidade: '', estado: '', cep: '' },
       observacoes: '',
     });
     setIsModalOpen(true);
@@ -130,13 +136,14 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
 
   // Edit Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editDocError, setEditDocError] = useState<string | null>(null);
   const [editingCliente, setEditingCliente] = useState<Cliente | null>(null);
   const [editFormData, setEditFormData] = useState({
     nome: '',
     telefone: '',
     email: '',
     cpfCnpj: '',
-    endereco: '',
+    addressData: { logradouro: '', numero: '', bairro: '', cidade: '', estado: '', cep: '' } as AddressData,
     observacoes: '',
   });
 
@@ -310,12 +317,33 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormDocError(null);
+
+    // Validação estrita de CPF / CNPJ se preenchido
+    let documentoFormatado = formData.cpfCnpj.trim();
+    if (documentoFormatado) {
+      const docValidation = validarDocumento(documentoFormatado);
+      if (!docValidation.valido) {
+        setFormDocError(docValidation.mensagemErro || 'CPF ou CNPJ inválido. Verifique os dígitos informados.');
+        return;
+      }
+      documentoFormatado = docValidation.formatado;
+    }
+
+    const formattedEndereco = formatEnderecoCompleto(formData.addressData);
+
     onAddCliente({
       nome: formData.nome.trim(),
       telefone: formData.telefone.trim(),
       email: formData.email.trim() || undefined,
-      cpfCnpj: formData.cpfCnpj.trim() || undefined,
-      endereco: formData.endereco.trim() || undefined,
+      cpfCnpj: documentoFormatado || undefined,
+      logradouro: formData.addressData.logradouro?.trim() || undefined,
+      numero: formData.addressData.numero?.trim() || undefined,
+      bairro: formData.addressData.bairro?.trim() || undefined,
+      cidade: formData.addressData.cidade?.trim() || undefined,
+      estado: formData.addressData.estado?.trim() || undefined,
+      cep: formData.addressData.cep?.trim() || undefined,
+      endereco: formattedEndereco || undefined,
       observacoes: formData.observacoes.trim() || undefined,
       ativo: true,
     });
@@ -323,19 +351,34 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
     setToastMessage(`Cliente "${formData.nome}" cadastrado com sucesso!`);
     setTimeout(() => setToastMessage(null), 4000);
 
-    setFormData({ nome: '', telefone: '', email: '', cpfCnpj: '', endereco: '', observacoes: '' });
+    setFormData({ nome: '', telefone: '', email: '', cpfCnpj: '', addressData: { logradouro: '', numero: '', bairro: '', cidade: '', estado: '', cep: '' }, observacoes: '' });
+    setFormDocError(null);
     setIsModalOpen(false);
   };
 
   // Open Edit Modal
   const handleOpenEdit = (cliente: Cliente) => {
+    setEditDocError(null);
     setEditingCliente(cliente);
+
+    // Se já tiver campos estruturados usa-os, senão decompoe a string endereco
+    const parsedAddr = (cliente.logradouro || cliente.cidade || cliente.bairro)
+      ? {
+          logradouro: cliente.logradouro || '',
+          numero: cliente.numero || '',
+          bairro: cliente.bairro || '',
+          cidade: cliente.cidade || '',
+          estado: cliente.estado || '',
+          cep: cliente.cep || '',
+        }
+      : parseEnderecoCompleto(cliente.endereco);
+
     setEditFormData({
       nome: cliente.nome || '',
       telefone: cliente.telefone || '',
       email: cliente.email || '',
       cpfCnpj: cliente.cpfCnpj || '',
-      endereco: cliente.endereco || '',
+      addressData: parsedAddr,
       observacoes: cliente.observacoes || '',
     });
     setIsEditModalOpen(true);
@@ -345,6 +388,20 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingCliente) return;
+    setEditDocError(null);
+
+    // Validação estrita de CPF / CNPJ se preenchido
+    let documentoFormatado = editFormData.cpfCnpj.trim();
+    if (documentoFormatado) {
+      const docValidation = validarDocumento(documentoFormatado);
+      if (!docValidation.valido) {
+        setEditDocError(docValidation.mensagemErro || 'CPF ou CNPJ inválido. Verifique os dígitos informados.');
+        return;
+      }
+      documentoFormatado = docValidation.formatado;
+    }
+
+    const formattedEndereco = formatEnderecoCompleto(editFormData.addressData);
 
     if (onUpdateCliente) {
       onUpdateCliente({
@@ -352,8 +409,14 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
         nome: editFormData.nome.trim(),
         telefone: editFormData.telefone.trim(),
         email: editFormData.email.trim() || undefined,
-        cpfCnpj: editFormData.cpfCnpj.trim() || undefined,
-        endereco: editFormData.endereco.trim() || undefined,
+        cpfCnpj: documentoFormatado || undefined,
+        logradouro: editFormData.addressData.logradouro?.trim() || undefined,
+        numero: editFormData.addressData.numero?.trim() || undefined,
+        bairro: editFormData.addressData.bairro?.trim() || undefined,
+        cidade: editFormData.addressData.cidade?.trim() || undefined,
+        estado: editFormData.addressData.estado?.trim() || undefined,
+        cep: editFormData.addressData.cep?.trim() || undefined,
+        endereco: formattedEndereco || undefined,
         observacoes: editFormData.observacoes.trim() || undefined,
       });
 
@@ -361,6 +424,7 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
       setTimeout(() => setToastMessage(null), 4000);
     }
 
+    setEditDocError(null);
     setIsEditModalOpen(false);
     setEditingCliente(null);
   };
@@ -1143,24 +1207,40 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
                     <input
                       type="text"
                       value={formData.cpfCnpj}
-                      onChange={(e) => setFormData({ ...formData, cpfCnpj: e.target.value })}
+                      onChange={(e) => {
+                        setFormData({ ...formData, cpfCnpj: e.target.value });
+                        if (formDocError) setFormDocError(null);
+                      }}
+                      onBlur={() => {
+                        if (formData.cpfCnpj.trim()) {
+                          const res = validarDocumento(formData.cpfCnpj);
+                          if (res.valido && res.formatado) {
+                            setFormData({ ...formData, cpfCnpj: res.formatado });
+                          }
+                        }
+                      }}
                       onFocus={handleFocusScroll}
-                      className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none font-mono"
-                      placeholder="000.000.000-00"
+                      className={`w-full px-3.5 py-2.5 bg-[#18181B] border rounded-xl text-white text-sm focus:outline-none font-mono ${
+                        formDocError ? 'border-red-500/80 focus:border-red-500' : 'border-[#27272A] focus:border-[#D4AF37]'
+                      }`}
+                      placeholder="000.000.000-00 ou CNPJ"
                     />
+                    {formDocError && (
+                      <p className="text-[11px] text-red-400 mt-1 flex items-center gap-1">
+                        <AlertTriangle size={12} className="shrink-0" />
+                        <span>{formDocError}</span>
+                      </p>
+                    )}
                   </div>
+                </div>
 
-                  <div>
-                    <label className="block text-xs font-medium text-[#A1A1AA] mb-1">Endereço Completo (Opcional)</label>
-                    <input
-                      type="text"
-                      value={formData.endereco}
-                      onChange={(e) => setFormData({ ...formData, endereco: e.target.value })}
-                      onFocus={handleFocusScroll}
-                      className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none"
-                      placeholder="Rua, Número, Bairro, Cidade"
-                    />
-                  </div>
+                <div className="bg-[#18181C] p-3.5 rounded-xl border border-[#27272A]">
+                  <EnderecoFormFields
+                    value={formData.addressData}
+                    onChange={(newAddr) => setFormData({ ...formData, addressData: newAddr })}
+                    onFocus={handleFocusScroll}
+                    labelPrefix="Cliente"
+                  />
                 </div>
 
                 <div>
@@ -1258,22 +1338,40 @@ export const ClientesView: React.FC<ClientesViewProps> = ({
                     <input
                       type="text"
                       value={editFormData.cpfCnpj}
-                      onChange={(e) => setEditFormData({ ...editFormData, cpfCnpj: e.target.value })}
+                      onChange={(e) => {
+                        setEditFormData({ ...editFormData, cpfCnpj: e.target.value });
+                        if (editDocError) setEditDocError(null);
+                      }}
+                      onBlur={() => {
+                        if (editFormData.cpfCnpj.trim()) {
+                          const res = validarDocumento(editFormData.cpfCnpj);
+                          if (res.valido && res.formatado) {
+                            setEditFormData({ ...editFormData, cpfCnpj: res.formatado });
+                          }
+                        }
+                      }}
                       onFocus={handleFocusScroll}
-                      className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none font-mono"
+                      className={`w-full px-3.5 py-2.5 bg-[#18181B] border rounded-xl text-white text-sm focus:outline-none font-mono ${
+                        editDocError ? 'border-red-500/80 focus:border-red-500' : 'border-[#27272A] focus:border-[#D4AF37]'
+                      }`}
+                      placeholder="000.000.000-00 ou CNPJ"
                     />
+                    {editDocError && (
+                      <p className="text-[11px] text-red-400 mt-1 flex items-center gap-1">
+                        <AlertTriangle size={12} className="shrink-0" />
+                        <span>{editDocError}</span>
+                      </p>
+                    )}
                   </div>
+                </div>
 
-                  <div>
-                    <label className="block text-xs font-medium text-[#A1A1AA] mb-1">Endereço Completo</label>
-                    <input
-                      type="text"
-                      value={editFormData.endereco}
-                      onChange={(e) => setEditFormData({ ...editFormData, endereco: e.target.value })}
-                      onFocus={handleFocusScroll}
-                      className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none"
-                    />
-                  </div>
+                <div className="bg-[#18181C] p-3.5 rounded-xl border border-[#27272A]">
+                  <EnderecoFormFields
+                    value={editFormData.addressData}
+                    onChange={(newAddr) => setEditFormData({ ...editFormData, addressData: newAddr })}
+                    onFocus={handleFocusScroll}
+                    labelPrefix="Cliente"
+                  />
                 </div>
 
                 <div>

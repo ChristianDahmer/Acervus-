@@ -19,6 +19,7 @@ import {
 import { TransacaoFinanceira, ReservaComItens, StatusReserva } from '../types';
 import { printElementById } from '../utils/printUtils';
 import { StandardListControls, StandardPagination, StandardEmptyState } from './StandardListContainer';
+import { formatCurrencyBRL, parseCurrencyBRLToNumber } from '../utils/currencyMask';
 import { 
   BarChart, 
   Bar, 
@@ -110,7 +111,7 @@ export const FinanceiroView: React.FC<FinanceiroViewProps> = ({
     onAddTransacao({
       tipo: newTransData.tipo,
       categoria: newTransData.categoria,
-      valor: parseFloat(newTransData.valor),
+      valor: parseCurrencyBRLToNumber(newTransData.valor),
       data: new Date(newTransData.data).getTime() + (12 * 60 * 60 * 1000), // Meio dia UTC para evitar fuso horário
       descricao: newTransData.descricao,
       status: newTransData.status,
@@ -904,12 +905,11 @@ export const FinanceiroView: React.FC<FinanceiroViewProps> = ({
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-white block">Valor (R$)</label>
                   <input
-                    type="number"
-                    step="0.01"
+                    type="text"
                     required
-                    placeholder="250.00"
-                    value={newTransData.valor}
-                    onChange={(e) => setNewTransData(prev => ({ ...prev, valor: e.target.value }))}
+                    placeholder="R$ 0,00"
+                    value={formatCurrencyBRL(newTransData.valor)}
+                    onChange={(e) => setNewTransData(prev => ({ ...prev, valor: parseCurrencyBRLToNumber(e.target.value).toString() }))}
                     className="w-full px-3.5 py-2.5 bg-[#111113] border border-[#27272A] rounded-xl text-xs text-white focus:border-[#D4AF37] focus:outline-none font-mono"
                   />
                 </div>

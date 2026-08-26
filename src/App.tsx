@@ -20,6 +20,7 @@ import { onSnapshot, collection } from 'firebase/firestore';
 import { db } from './lib/firebase';
 import { checkAndRunDailyAutoBackup } from './lib/googleDriveBackup';
 import { getAppLogoUrl, handleLogoError } from './utils/logoUtils';
+import { AcervusSystemLogo } from './components/AcervusSystemLogo';
 import { ViewSkeleton } from './components/ViewSkeleton';
 
 // Code-Splitting & Lazy Loading de Telas para Carregamento e Troca Sub-50ms
@@ -38,6 +39,7 @@ const WhatsAppModal = lazy(() => import('./components/WhatsAppModal').then(m => 
 const WebFormModal = lazy(() => import('./components/WebFormModal').then(m => ({ default: m.WebFormModal })));
 const WorkManagerSimModal = lazy(() => import('./components/WorkManagerSimModal').then(m => ({ default: m.WorkManagerSimModal })));
 const AiAssistantDrawer = lazy(() => import('./components/AiAssistantDrawer').then(m => ({ default: m.AiAssistantDrawer })));
+const OnboardingIaWizardModal = lazy(() => import('./components/OnboardingIaWizardModal').then(m => ({ default: m.OnboardingIaWizardModal })));
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>(() => {
@@ -142,6 +144,20 @@ export default function App() {
     }
   }, [authenticatedDevice, empresaConfig]);
 
+  // Atualizar periodicamente o ultimoAcesso do usuário logado para garantir status online visível no painel
+  useEffect(() => {
+    if (!authenticatedDevice) return;
+    const updateOnlinePing = async () => {
+      try {
+        const updated = { ...authenticatedDevice, ultimoAcesso: Date.now() };
+        await saveDocument('dispositivos_autorizados', updated.id, updated);
+      } catch (e) {}
+    };
+    updateOnlinePing();
+    const interval = setInterval(updateOnlinePing, 60000); // a cada 1 min
+    return () => clearInterval(interval);
+  }, [authenticatedDevice?.id]);
+
   // Rotina de Backup Automático Diário no Google Drive
   useEffect(() => {
     if (!isLoading && empresaConfig) {
@@ -156,6 +172,17 @@ export default function App() {
   const [showDiagnosticPanel, setShowDiagnosticPanel] = useState<boolean>(false);
   const [isWipedState, setIsWipedState] = useState(() => localStorage.getItem('locadora_wiped_state') === 'true');
   const [startInventarioInSelectionMode, setStartInventarioInSelectionMode] = useState<boolean>(false);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState<boolean>(false);
+
+  // Auto-exibir o Assistente de Configuração Inicial IA na primeira inicialização
+  useEffect(() => {
+    if (!isLoading && authenticatedDevice) {
+      const completed = localStorage.getItem('acervus_onboarding_completed') === 'true';
+      if (!completed) {
+        setIsOnboardingOpen(true);
+      }
+    }
+  }, [isLoading, authenticatedDevice]);
 
   // Lazy & On-Demand Module Load Status (Fase 2)
   const [lazyLoadStatus, setLazyLoadStatus] = useState<Record<string, 'PENDING' | 'LOADING' | 'SUCCESS' | 'ERROR'>>({
@@ -562,13 +589,15 @@ export default function App() {
               if (!currentAuth) {
                 // ALTERADO: Create default admin/operator entry from current session/currentEmpresaConf
                 // para evitar condição de corrida com o estado desatualizado da empresa de fallback/default
+                const isOnboardingCompleted = localStorage.getItem('acervus_onboarding_completed') === 'true';
                 currentAuth = {
                   id: deviceUuid,
                   imei: deviceUuid,
                   nomeDispositivo: 'Terminal Principal Administrador',
                   cnpjEmpresa: currentEmpresaConf?.cnpj || '00.000.000/0001-00',
-                  usuario: currentEmpresaConf?.nomeRepresentante || 'Administrador do Sistema',
-                  email: currentEmpresaConf?.email || 'admin@acervuscore.com.br',
+                  usuario: isOnboardingCompleted ? (currentEmpresaConf?.nomeRepresentante || 'Administrador do Sistema') : 'Administrador',
+                  email: isOnboardingCompleted ? (currentEmpresaConf?.email || 'admin@acervuscore.com.br') : 'admin@acervuscore.com.br',
+                  senha: currentEmpresaConf?.senhaAcesso || '123456',
                   telefone: currentEmpresaConf?.telefoneWhatsapp || '',
                   nivelAcesso: 'ADMINISTRADOR',
                   status: 'APROVADO',
@@ -1260,6 +1289,10 @@ export default function App() {
     dataDevolucao: number;
     status: StatusReserva;
     manualCliente?: { nome: string; telefone: string };
+    endereco?: string; // NOVO: Local do evento / Endereço
+    valorFrete?: number;
+    distanciaKm?: number;
+    valorFretePorKm?: number;
   }) => {
     let finalClienteId = reservaData.clienteId || 0;
     let clienteObj: Cliente;
@@ -1272,7 +1305,7 @@ export default function App() {
         telefone: reservaData.manualCliente.telefone.trim() || '(00) 00000-0000',
         email: '',
         cpfCnpj: '',
-        endereco: '',
+        endereco: reservaData.endereco || '',
         ativo: true,
       };
       setClientes((prev) => [clienteObj, ...prev]);
@@ -1287,7 +1320,8 @@ export default function App() {
     const diffTime = Math.max(0, reservaData.dataDevolucao - reservaData.dataRetirada);
     const isSameDay = new Date(reservaData.dataRetirada).toDateString() === new Date(reservaData.dataDevolucao).toDateString();
     const diasReserva = isSameDay ? 1 : Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
-    const valorTotal = itemsObj.reduce((acc, curr) => acc + curr.precoAluguel, 0) * diasReserva;
+    const valorTotalSemFrete = itemsObj.reduce((acc, curr) => acc + curr.precoAluguel, 0) * diasReserva;
+    const valorTotal = valorTotalSemFrete + (reservaData.valorFrete || 0);
 
     const nextReservaId = Math.max(...reservas.map((r) => r.reserva.id), 1000) + 1;
 
@@ -1298,7 +1332,11 @@ export default function App() {
         dataRetirada: reservaData.dataRetirada,
         dataDevolucao: reservaData.dataDevolucao,
         status: reservaData.status,
-      },
+        endereco: reservaData.endereco || undefined, // NOVO: Salva endereco na reserva
+        valorFrete: reservaData.valorFrete || undefined,
+        distanciaKm: reservaData.distanciaKm || undefined,
+        valorFretePorKm: reservaData.valorFretePorKm || undefined,
+      } as any,
       cliente: clienteObj,
       itens: itemsObj,
       valorTotal,
@@ -1588,7 +1626,13 @@ export default function App() {
     dataRetirada: number,
     dataDevolucao: number,
     contratoAssinadoText?: string,
-    hashAssinaturaDigital?: string
+    hashAssinaturaDigital?: string,
+    endereco?: string, // NOVO
+    observacoes?: string, // NOVO: Observações informadas pelo cliente na proposta
+    valorFrete?: number,
+    distanciaKm?: number,
+    valorFretePorKm?: number,
+    contratarMontagem?: boolean // NOVO: Contratação de montagem no local
   ) => {
     let tempClientes = [...clientes];
     let tempItens = [...itens];
@@ -1643,9 +1687,18 @@ export default function App() {
         id: nextClientId,
         nome: clienteNome,
         telefone: clienteTelefone,
+        endereco: endereco || undefined, // NOVO: Salva endereço no novo cliente
       };
       tempClientes.push(clienteObj);
       await saveDocument('clientes', nextClientId, clienteObj);
+    } else if (endereco && !clienteObj.endereco) {
+      // NOVO: Atualiza endereço do cliente existente se ainda não possuía
+      clienteObj = {
+        ...clienteObj,
+        endereco: endereco,
+      };
+      tempClientes = tempClientes.map((c) => (c.id === clienteObj!.id ? clienteObj! : c));
+      await saveDocument('clientes', clienteObj.id, clienteObj);
     }
 
     // NOVO: Cálculo do calção de garantia de reserva
@@ -1675,7 +1728,8 @@ export default function App() {
 
     const diffTime = Math.max(0, dataDevolucao - dataRetirada);
     const diasReserva = Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
-    const valorTotal = selectedItems.reduce((acc, curr) => acc + (curr?.precoAluguel || 0), 0) * diasReserva;
+    const valorTotalSemFrete = selectedItems.reduce((acc, curr) => acc + (curr?.precoAluguel || 0), 0) * diasReserva;
+    const valorTotal = valorTotalSemFrete + (valorFrete || 0);
 
     const percentualCalcao = existingForm?.percentualCalcao !== undefined ? Number(existingForm.percentualCalcao) : (empresaConfig?.painelConfiguracao?.percentualSinalPadrao ?? 30);
     const valorCalcaoCalculado = (valorTotal * percentualCalcao) / 100;
@@ -1696,7 +1750,13 @@ export default function App() {
         contratoAssinadoText,
         hashAssinaturaDigital,
         dataAssinatura: Date.now(),
-      },
+        endereco: endereco || undefined, // NOVO: Armazena o endereço de entrega na reserva
+        observacoes: observacoes || undefined, // NOVO: Armazena as observações do cliente na reserva
+        valorFrete: valorFrete || undefined,
+        distanciaKm: distanciaKm || undefined,
+        valorFretePorKm: valorFretePorKm || undefined,
+        contratarMontagem: contratarMontagem ?? undefined, // NOVO: Armazena a opção de contratação de montagem
+      } as any,
       cliente: clienteObj,
       itens: selectedItems,
       valorTotal,
@@ -1743,6 +1803,12 @@ export default function App() {
         valorCalcaoCalculado,
         contratoAssinadoText,
         hashAssinaturaDigital,
+        endereco, // NOVO: Guarda o local do evento no formulário
+        observacoes, // NOVO: Guarda as observações do cliente no formulário
+        valorFrete: valorFrete || undefined,
+        distanciaKm: distanciaKm || undefined,
+        valorFretePorKm: valorFretePorKm || undefined,
+        contratarMontagem: contratarMontagem ?? undefined, // NOVO: Guarda a opção de contratação de montagem
       },
     };
 
@@ -1821,6 +1887,15 @@ export default function App() {
     setWebForms(updatedWebForms);
   };
 
+  const handleUpdateWebForm = async (form: FormularioWeb) => {
+    const updated = webForms.some(f => f && f.id === form.id)
+      ? webForms.map(f => (f && f.id === form.id ? form : f))
+      : [form, ...webForms];
+    setWebForms(updated);
+    saveLocalCollection('webForms', updated);
+    await saveDocument('webForms', form.id, form);
+  };
+
   // WorkManager Background Sync Trigger (Converts web forms into real reservas)
   const handleTriggerWorkerSync = () => {
     const pendingForms = webForms.filter((f) => f.respondido && f.resposta);
@@ -1895,6 +1970,9 @@ export default function App() {
   const handleSaveEmpresaConfig = (config: EmpresaConfig) => {
     setEmpresaConfig(config);
     saveConfig('empresaConfig', config);
+    try {
+      localStorage.setItem('locadora_empresa_config', JSON.stringify(config));
+    } catch (e) {}
   };
 
   const handleSaveThemeConfig = (config: ThemeConfig) => {
@@ -1977,22 +2055,19 @@ export default function App() {
           <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-[#D4AF37]/50 via-[#D4AF37] to-[#D4AF37]/50" />
 
           {/* Core Acervus Branding */}
-          <div className="flex flex-col items-center space-y-3 text-center">
-            {!!getAppLogoUrl(empresaConfig?.logoUrl) && (
-              <div className="w-24 h-24 sm:w-28 sm:h-28 flex items-center justify-center bg-transparent shrink-0">
-                <img 
-                  src={getAppLogoUrl(empresaConfig?.logoUrl)} 
-                  alt={empresaConfig?.nomeFantasia || "Logo"} 
-                  className="w-full h-full object-contain filter drop-shadow-lg" 
-                  referrerPolicy="no-referrer" 
-                  onError={handleLogoError}
-                />
+          <div className="flex flex-col items-center space-y-4 text-center">
+            {/* Logo Container with Ambient Glow Effect */}
+            <div className="relative group flex flex-col items-center">
+              <div className="absolute -inset-2 bg-gradient-to-r from-cyan-500/20 via-[#D4AF37]/20 to-blue-600/20 rounded-3xl blur-xl opacity-80 animate-pulse" />
+              <div className="relative p-4 sm:p-5 bg-gradient-to-b from-[#18181B] to-[#0F0F12] border border-[#27272A] rounded-2xl shadow-2xl flex items-center justify-center">
+                <AcervusSystemLogo size={140} showText={false} />
               </div>
-            )}
+            </div>
+
             <div>
-              <h1 className="font-serif italic text-2xl text-white animate-pulse">Acervus</h1>
-              <p className="text-[10px] uppercase tracking-widest text-[#D4AF37] font-semibold mt-0.5">
-                Inicialização & Sincronização
+              <h1 className="font-serif italic text-2xl text-white font-bold tracking-tight">Acervus Core</h1>
+              <p className="text-[10px] uppercase tracking-widest text-[#D4AF37] font-semibold font-mono mt-1">
+                Inicialização & Sincronização Multi-Tenant
               </p>
             </div>
           </div>
@@ -2192,6 +2267,7 @@ export default function App() {
         setEmpresaSubTab={setEmpresaSubTab}
         onOpenNovaReserva={() => setIsNovaReservaOpen(true)}
         onOpenAiAssistant={() => setIsAiAssistantOpen(true)}
+        onOpenOnboardingWizard={() => setIsOnboardingOpen(true)}
         exibirGuiaArquitetura={themeConfig.exibirGuiaArquitetura}
         authenticatedDevice={authenticatedDevice}
         onLogoff={handleLogoff}
@@ -2235,6 +2311,7 @@ export default function App() {
               onOpenWhatsApp={(r) => setWhatsAppReserva(r)}
               listVisibility={empresaConfig.listVisibility}
               onUpdateNfse={handleUpdateNfse}
+              onUpdateWebForm={handleUpdateWebForm}
             />
           )}
 
@@ -2303,6 +2380,7 @@ export default function App() {
                 setActiveTab('inventario');
                 setStartInventarioInSelectionMode(true);
               }}
+              onOpenOnboardingWizard={() => setIsOnboardingOpen(true)}
             />
           )}
 
@@ -2391,6 +2469,8 @@ export default function App() {
           <NovaReservaModal
             clientes={clientes}
             itens={itens}
+            reservas={reservas}
+            empresaConfig={empresaConfig}
             onClose={() => setIsNovaReservaOpen(false)}
             onSaveReserva={handleSaveReserva}
           />
@@ -2438,6 +2518,35 @@ export default function App() {
             }}
           />
         )}
+
+        {isOnboardingOpen && (
+          <OnboardingIaWizardModal
+            isOpen={isOnboardingOpen}
+            onClose={() => setIsOnboardingOpen(false)}
+            empresaConfig={isOnboardingOpen ? {
+              nomeFantasia: '',
+              razaoSocial: '',
+              cnpj: '',
+              enderecoCompleto: '',
+              telefoneWhatsapp: '',
+              nomeRepresentante: '',
+              listVisibility: {
+                exibirInventarioPorPadrao: true,
+                exibirCategoriasPorPadrao: true,
+                exibirClientesPorPadrao: true,
+                exibirReservasPorPadrao: true,
+              },
+              tabDisplay: {
+                abaPrincipalId: 'inventario',
+                abasFixadas: ['inventario', 'reservas'],
+                ordemAbas: ['inventario', 'reservas'],
+                abasOcultas: [],
+                nomesAbas: {},
+              },
+            } : empresaConfig}
+            onSaveEmpresaConfig={handleSaveEmpresaConfig}
+          />
+        )}
       </Suspense>
 
       {/* Floating AI Widget Button */}
@@ -2465,6 +2574,9 @@ export default function App() {
           setIsNovaReservaOpen(true);
           setIsAiAssistantOpen(false);
         }}
+        itens={itens}
+        clientes={clientes}
+        onEditItem={handleEditItem}
       />
 
       {/* Footer */}

@@ -1,9 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { getAppLogoUrl, handleLogoError } from '../utils/logoUtils';
+import { AcervusSystemLogo } from './AcervusSystemLogo';
 import { FormularioWeb, ItemAcervo, EmpresaConfig, ThemeConfig, ReservaComItens, StatusReserva, Cliente } from '../types';
-import { fetchCollection, getLocalCollection, fetchDocument } from '../lib/firebaseSync';
+import { calcularDistanciaRealOuSimulada, calcularValorFrete } from '../utils/freteUtils';
+import { fetchCollection, getLocalCollection, fetchDocument, getConfig } from '../lib/firebaseSync';
+import { INITIAL_EMPRESA_CONFIG } from '../data/initialData';
 import { PhoneInput } from './PhoneInput';
 import { formatarMoeda, formatarDataBr } from '../utils/whatsappTemplates';
+import { EnderecoFormFields } from './EnderecoFormFields';
+import { formatEnderecoCompleto, parseEnderecoCompleto, AddressData } from '../utils/addressUtils';
 import { 
   CheckCircle2, 
   Calendar, 
@@ -33,6 +38,9 @@ import {
   Copy,
   QrCode,
   Landmark,
+  MapPin, // NOVO
+  MessageSquare, // NOVO: Campo descritivo de observações
+  Wrench, // NOVO: Ícone para contratação de montagem
 } from 'lucide-react';
 import { printHtmlContent } from '../utils/printUtils';
 import { QRCodeSVG } from 'qrcode.react';
@@ -51,7 +59,13 @@ interface PropostaOrcamentoViewProps {
     dataRetirada: number,
     dataDevolucao: number,
     contratoAssinadoText?: string,
-    hashAssinaturaDigital?: string
+    hashAssinaturaDigital?: string,
+    endereco?: string, // NOVO
+    observacoes?: string, // NOVO
+    valorFrete?: number,
+    distanciaKm?: number,
+    valorFretePorKm?: number,
+    contratarMontagem?: boolean // NOVO: Contratação de montagem
   ) => Promise<void>;
   onRejectProposal?: (formId: string, motivo: string) => Promise<void>;
   onUpdateProposalText?: (formId: string, newText: string) => Promise<void>;
@@ -71,12 +85,64 @@ export const PropostaOrcamentoView: React.FC<PropostaOrcamentoViewProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [notFound, setNotFound] = useState<boolean>(false);
 
+  // Sincronização robusta das configurações da empresa para a Proposta de Orçamento
+  const [currentEmpresaConfig, setCurrentEmpresaConfig] = useState<EmpresaConfig>(() => {
+    if (empresaConfig && (empresaConfig.logoUrl || empresaConfig.nomeFantasia)) return empresaConfig;
+    try {
+      const saved = localStorage.getItem('locadora_empresa_config') ||
+                    localStorage.getItem('offline_config_empresaConfig_default') ||
+                    localStorage.getItem('offline_config_empresa_config_default');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return empresaConfig || INITIAL_EMPRESA_CONFIG;
+  });
+
+  const [logoLoadFailed, setLogoLoadFailed] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (empresaConfig) {
+      setCurrentEmpresaConfig(empresaConfig);
+      setLogoLoadFailed(false);
+    }
+  }, [empresaConfig]);
+
   // Form State
   const [nomeCliente, setNomeCliente] = useState('');
   const [whatsapp, setWhatsapp] = useState('');
   const [selectedItems, setSelectedItems] = useState<number[]>([]);
   const [dataRetirada, setDataRetirada] = useState('');
   const [dataDevolucao, setDataDevolucao] = useState('');
+  const [endereco, setEndereco] = useState(''); // NOVO: Local do Evento / Endereço de entrega
+  const [addressData, setAddressData] = useState<AddressData>({
+    logradouro: '',
+    numero: '',
+    bairro: '',
+    cidade: '',
+    estado: '',
+    cep: '',
+  });
+  const [observacoes, setObservacoes] = useState(''); // NOVO: Observações / Solicitações do Cliente
+  const [contratarMontagem, setContratarMontagem] = useState<boolean>(false); // NOVO: Checkbox de montagem
+
+  // Freight States
+  const [distanciaKm, setDistanciaKm] = useState<number>(0);
+  const [valorFrete, setValorFrete] = useState<number>(0);
+  const [valorFretePorKm, setValorFretePorKm] = useState<number>(currentEmpresaConfig?.valorFretePorKm || empresaConfig?.valorFretePorKm || 0);
+  const [calculandoFrete, setCalculandoFrete] = useState<boolean>(false);
+
+  // Sync with company config value when it changes
+  useEffect(() => {
+    const rate = currentEmpresaConfig?.valorFretePorKm || empresaConfig?.valorFretePorKm;
+    if (rate !== undefined) {
+      setValorFretePorKm(rate);
+    }
+  }, [currentEmpresaConfig, empresaConfig]);
+
+  // Recalculate freight cost when distance or rate per km changes
+  useEffect(() => {
+    const calculated = calcularValorFrete(distanciaKm, valorFretePorKm);
+    setValorFrete(calculated);
+  }, [distanciaKm, valorFretePorKm]);
 
   // Editable Proposal Text State
   const [isEditingIntro, setIsEditingIntro] = useState(false);
@@ -99,22 +165,30 @@ export const PropostaOrcamentoView: React.FC<PropostaOrcamentoViewProps> = ({
   // Pix Copy Confirmation Feedbacks
   const [copiedPixKey, setCopiedPixKey] = useState(false);
 
+  // Helper para obter iniciais elegantes da empresa caso não tenha logo
+  const getCompanyInitials = (name?: string) => {
+    if (!name || !name.trim()) return 'BF';
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  };
+
   // Pix Helpers
   const getPixKey = () => {
-    if (empresaConfig?.pixChave && empresaConfig.pixChave.trim()) {
+    if (currentEmpresaConfig?.pixChave && currentEmpresaConfig.pixChave.trim()) {
       return { 
-        tipo: empresaConfig.pixTipoChave || 'Chave PIX', 
-        valor: empresaConfig.pixChave.trim() 
+        tipo: currentEmpresaConfig.pixTipoChave || 'Chave PIX', 
+        valor: currentEmpresaConfig.pixChave.trim() 
       };
     }
-    if (empresaConfig?.cnpj && empresaConfig.cnpj.trim()) {
-      return { tipo: 'CNPJ', valor: empresaConfig.cnpj.trim() };
+    if (currentEmpresaConfig?.cnpj && currentEmpresaConfig.cnpj.trim()) {
+      return { tipo: 'CNPJ', valor: currentEmpresaConfig.cnpj.trim() };
     }
-    if (empresaConfig?.telefoneWhatsapp && empresaConfig.telefoneWhatsapp.trim()) {
-      return { tipo: 'TELEFONE', valor: empresaConfig.telefoneWhatsapp.trim() };
+    if (currentEmpresaConfig?.telefoneWhatsapp && currentEmpresaConfig.telefoneWhatsapp.trim()) {
+      return { tipo: 'TELEFONE', valor: currentEmpresaConfig.telefoneWhatsapp.trim() };
     }
-    if (empresaConfig?.email && empresaConfig.email.trim()) {
-      return { tipo: 'E-MAIL', valor: empresaConfig.email.trim() };
+    if (currentEmpresaConfig?.email && currentEmpresaConfig.email.trim()) {
+      return { tipo: 'E-MAIL', valor: currentEmpresaConfig.email.trim() };
     }
     return { tipo: 'CHAVE_ALEATORIA', valor: '3532-4112-9852-1928' };
   };
@@ -300,6 +374,26 @@ export const PropostaOrcamentoView: React.FC<PropostaOrcamentoViewProps> = ({
         setProposta(found);
         setIntroText(found.textoIntroducao || 'Revisamos esta proposta de orçamento especialmente para você. Marque abaixo os itens do acervo que deseja incluir em seu evento, preencha os detalhes do seu contato e confirme para gerar o agendamento de forma instantânea!');
         
+        // Tentar obter dados atualizados da empresa para garantir a logo mais recente do cadastro
+        try {
+          const cfg = await getConfig<EmpresaConfig>('empresaConfig', currentEmpresaConfig || empresaConfig || INITIAL_EMPRESA_CONFIG);
+          if (cfg && (cfg.logoUrl || cfg.nomeFantasia)) {
+            setCurrentEmpresaConfig(cfg);
+            setLogoLoadFailed(false);
+          } else {
+            const saved = localStorage.getItem('locadora_empresa_config') ||
+                          localStorage.getItem('offline_config_empresaConfig_default') ||
+                          localStorage.getItem('offline_config_empresa_config_default');
+            if (saved) {
+              const parsed = JSON.parse(saved);
+              if (parsed && (parsed.logoUrl || parsed.nomeFantasia)) {
+                setCurrentEmpresaConfig(parsed);
+                setLogoLoadFailed(false);
+              }
+            }
+          }
+        } catch (e) {}
+
         // Check rejection state from database
         if (found.recusado) {
           setIsRejected(true);
@@ -310,6 +404,23 @@ export const PropostaOrcamentoView: React.FC<PropostaOrcamentoViewProps> = ({
         if (found.respondido && found.resposta) {
           setNomeCliente(found.resposta.clienteNome);
           setWhatsapp(found.resposta.clienteTelefone);
+          const existingAddr = (found.resposta.logradouro || found.resposta.cidade || found.resposta.bairro)
+            ? {
+                logradouro: found.resposta.logradouro || '',
+                numero: found.resposta.numero || '',
+                bairro: found.resposta.bairro || '',
+                cidade: found.resposta.cidade || '',
+                estado: found.resposta.estado || '',
+                cep: found.resposta.cep || '',
+              }
+            : parseEnderecoCompleto(found.resposta.endereco);
+          setAddressData(existingAddr);
+          setEndereco(formatEnderecoCompleto(existingAddr) || found.resposta.endereco || '');
+          setObservacoes(found.resposta.observacoes || ''); // NOVO: Carrega as observações informadas pelo cliente
+          setContratarMontagem(!!found.resposta.contratarMontagem); // NOVO: Carrega o status de contratação de montagem
+          setDistanciaKm(found.resposta.distanciaKm || found.distanciaKm || 0);
+          setValorFrete(found.resposta.valorFrete || found.valorFrete || 0);
+          setValorFretePorKm(found.resposta.valorFretePorKm || found.valorFretePorKm || empresaConfig?.valorFretePorKm || 0);
           // NOVO: Preenche os itens selecionados apenas se já respondido
           setSelectedItems(found.resposta.itemIdsSelecionados || []);
           
@@ -327,6 +438,7 @@ export const PropostaOrcamentoView: React.FC<PropostaOrcamentoViewProps> = ({
         } else {
           // ALTERADO: Por padrão, para propostas não respondidas, os itens chegam desmarcados (checkbox não marcado)
           setSelectedItems([]);
+          setContratarMontagem(false);
 
           // Set default dates to today + 2 days and today + 5 days
           const today = new Date();
@@ -363,7 +475,8 @@ export const PropostaOrcamentoView: React.FC<PropostaOrcamentoViewProps> = ({
     .filter(i => selectedItems.includes(i.id))
     .reduce((sum, item) => sum + item.precoAluguel, 0) || 0;
   
-  const totalGeral = subtotal * diasLocacao;
+  const totalItens = subtotal * diasLocacao;
+  const totalGeral = totalItens + valorFrete;
   const percentualCalcao = empresaConfig?.painelConfiguracao?.percentualSinalPadrao ?? 30;
   const valorCalcao = (totalGeral * percentualCalcao) / 100;
   const saldoRestante = Math.max(0, totalGeral - valorCalcao);
@@ -428,12 +541,14 @@ PROPOSTA E RESERVA CONFIRMADA #${proposta.id}
 =============================================================
 
 1. IDENTIFICAÇÃO DAS PARTES:
-LOCADOR: ${empresaConfig.razaoSocial || empresaConfig.nomeFantasia || 'Bora Festar Locações'}
+LOCATOR: ${empresaConfig.razaoSocial || empresaConfig.nomeFantasia || 'Bora Festar Locações'}
 CNPJ: ${empresaConfig.cnpj || 'Não Informado'}
 Endereço: ${empresaConfig.enderecoCompleto || 'Consulte o locador'}
 
 LOCATÁRIO(A): ${nomeCliente}
 WhatsApp: ${whatsapp}
+${endereco ? `Local do Evento / Entrega: ${endereco}` : ''}
+${observacoes ? `Observações / Pedidos Especiais: ${observacoes}` : ''}
 
 2. OBJETO E ITENS SELECIONADOS:
 ${itemsSelectedList}
@@ -446,7 +561,8 @@ Valor Total Estimado: ${formatarMoeda(totalGeral)}
 Calção de Garantia de Reserva (${percentualCalcao}%): ${formatarMoeda(valorCalcao)}
 Saldo Restante na Retirada: ${formatarMoeda(saldoRestante)}
 
-4. TERMOS DE ASSINATURA DIGITAL:
+4. TERMOS E SERVIÇOS ADICIONAIS:
+Serviço de Montagem no Local: ${contratarMontagem ? 'SIM, CONTRATADO PELO CLIENTE (Equipe Técnica da Locadora)' : 'NÃO CONTRATADO (Montagem por conta do Locatário)'}
 O(A) LOCATÁRIO(A) declara que leu, conferiu e aceita integralmente as condições deste instrumento através da aprovação interativa da proposta.
 
 Assinado Digitalmente por: ${nomeCliente}
@@ -464,7 +580,13 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
         timestampRetirada,
         timestampDevolucao,
         generatedContract,
-        hashToken
+        hashToken,
+        endereco, // NOVO
+        observacoes, // NOVO
+        valorFrete || undefined,
+        distanciaKm || undefined,
+        valorFretePorKm || undefined,
+        contratarMontagem // NOVO
       );
 
       // Store generated details locally
@@ -477,7 +599,13 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
         diasLocacao,
         totalGeral,
         contractText: generatedContract,
-        hashToken
+        hashToken,
+        endereco, // NOVO
+        observacoes, // NOVO
+        valorFrete: valorFrete || undefined,
+        distanciaKm: distanciaKm || undefined,
+        valorFretePorKm: valorFretePorKm || undefined,
+        contratarMontagem // NOVO
       });
 
       setTimeout(() => {
@@ -596,38 +724,89 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
   const primaryColor = themeConfig.primaryColor || '#D4AF37';
 
   return (
-    <div className="min-h-screen bg-[#0E0E11] text-[#E4E4E7] pt-2 pb-6 px-4 md:pt-4 md:pb-12 flex flex-col items-center justify-start selection:bg-[#D4AF37]/30">
-      <div className="max-w-xl w-full space-y-6">
+    <div className="min-h-screen bg-[#0E0E11] text-[#E4E4E7] pt-2 pb-6 px-3.5 sm:px-4 md:pb-10 flex flex-col items-center justify-start selection:bg-[#D4AF37]/30">
+      <div className="max-w-xl w-full space-y-3.5 sm:space-y-4">
         
-        {/* Header Card */}
-        <div className="bg-[#151518] rounded-2xl border border-[#27272A] p-6 text-center relative overflow-hidden shadow-2xl">
+        {/* Header Card Compacto */}
+        <div className="bg-[#151518] rounded-2xl border border-[#27272A] p-4 sm:p-4.5 text-center relative overflow-hidden shadow-xl">
           <div 
-            style={{ backgroundColor: `${primaryColor}10` }} 
-            className="absolute top-0 left-0 right-0 h-1.5"
+            style={{ backgroundColor: `${primaryColor}15` }} 
+            className="absolute top-0 left-0 right-0 h-1"
           />
           
-           {!!getAppLogoUrl(empresaConfig?.logoUrl) && (
-             <div className="flex justify-center mb-3">
-               <div className="w-24 h-24 sm:w-28 sm:h-28 flex items-center justify-center bg-transparent">
-                 <img 
-                   src={getAppLogoUrl(empresaConfig?.logoUrl)} 
-                   alt={empresaConfig?.nomeFantasia || "Logo"} 
-                   className="w-full h-full object-contain filter drop-shadow-md" 
-                   referrerPolicy="no-referrer" 
-                   onError={handleLogoError}
-                 />
-               </div>
-             </div>
-           )}
+          {/* Top Brand & Company Info Header */}
+          <div className="flex flex-col items-center justify-center gap-2">
+            {/* Logos Row: Logo da Empresa no lado Esquerdo e Logo do Sistema no lado Direito com maior destaque */}
+            <div className="w-full flex items-center justify-between px-1 sm:px-2">
+              {/* LADO ESQUERDO: Logo da Empresa (Locador) com Máximo Destaque */}
+              <div className="flex items-center gap-2.5">
+                {currentEmpresaConfig?.logoUrl && currentEmpresaConfig.logoUrl.trim() !== '' && !logoLoadFailed ? (
+                  <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-b from-[#242429] to-[#121215] border-2 border-[#D4AF37] p-1.5 flex items-center justify-center shrink-0 shadow-xl shadow-[#D4AF37]/20 ring-2 ring-[#D4AF37]/30 hover:scale-105 transition-all overflow-hidden">
+                    <img 
+                      src={getAppLogoUrl(currentEmpresaConfig.logoUrl)} 
+                      alt={currentEmpresaConfig?.nomeFantasia || "Logo Empresa"} 
+                      className="w-full h-full object-contain filter drop-shadow-lg rounded-xl" 
+                      referrerPolicy="no-referrer" 
+                      onError={() => setLogoLoadFailed(true)}
+                    />
+                  </div>
+                ) : (
+                  <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-b from-[#242429] to-[#161619] border-2 border-[#D4AF37] p-1.5 flex flex-col items-center justify-center shrink-0 shadow-xl shadow-[#D4AF37]/20 ring-2 ring-[#D4AF37]/30 text-center">
+                    <span className="text-base sm:text-lg font-black text-[#D4AF37] tracking-wider leading-none">
+                      {getCompanyInitials(currentEmpresaConfig?.nomeFantasia)}
+                    </span>
+                    <span className="text-[8px] font-bold text-[#A1A1AA] uppercase tracking-tighter mt-1 leading-none line-clamp-1">
+                      {currentEmpresaConfig?.nomeFantasia ? currentEmpresaConfig.nomeFantasia.substring(0, 7) : 'LOCADOR'}
+                    </span>
+                  </div>
+                )}
+                <div className="text-left hidden sm:block">
+                  <span className="text-[10px] uppercase font-bold text-[#D4AF37] tracking-wider block">Locador</span>
+                  <span className="text-xs font-semibold text-[#E4E4E7] line-clamp-1">{currentEmpresaConfig?.nomeFantasia || 'Bora Festar'}</span>
+                </div>
+              </div>
 
-           <h1 className="text-2xl font-serif italic font-extrabold text-white tracking-tight">
-            {empresaConfig.nomeFantasia || 'Bora Festar Locações'}
-          </h1>
-          <p className="text-[#A1A1AA] text-xs mt-1">
-            {empresaConfig.enderecoCompleto || 'Consulte seu locador parceiro'}
-          </p>
-          <div className="mt-4 flex flex-col items-center gap-2">
-            <span className={`border font-mono text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-widest flex items-center gap-1.5 ${
+              {/* LADO DIREITO: Logo Oficial do Sistema (Acervus Core) */}
+              <div className="flex items-center gap-2.5">
+                <div className="text-right hidden sm:block">
+                  <span className="text-[10px] uppercase font-bold text-[#71717A] tracking-wider block">Sistema</span>
+                  <span className="text-xs font-semibold text-[#38BDF8] line-clamp-1">Acervus Core</span>
+                </div>
+                <div className="p-2 sm:p-2.5 bg-gradient-to-b from-[#18181B] to-[#0F0F12] border border-[#27272A] rounded-2xl shadow-lg shadow-black/40 flex items-center justify-center shrink-0 hover:border-[#38BDF8]/40 transition-all" title="Acervus Core">
+                  <AcervusSystemLogo size={52} showText={false} />
+                </div>
+              </div>
+            </div>
+
+            {/* Central Title & Address */}
+            <div className="space-y-0.5 text-center mt-0.5">
+              <h1 className="text-[18px] sm:text-[22px] font-serif italic font-extrabold text-white tracking-tight leading-tight">
+                {currentEmpresaConfig?.nomeFantasia || 'Bora Festar Locações'}
+              </h1>
+              
+              <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-[11px] text-[#A1A1AA]">
+                {currentEmpresaConfig?.enderecoCompleto && (
+                  <span className="truncate max-w-[280px] sm:max-w-md">{currentEmpresaConfig.enderecoCompleto}</span>
+                )}
+                {currentEmpresaConfig?.linkMapaLocalizacao && (
+                  <a 
+                    href={currentEmpresaConfig.linkMapaLocalizacao}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[#D4AF37] hover:text-[#E5C158] font-bold transition-all underline decoration-[#D4AF37]/30 underline-offset-2 cursor-pointer shrink-0"
+                    title="Ver localização no Google Maps / Waze"
+                  >
+                    <MapPin size={10} />
+                    <span>Ver no Mapa</span>
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Unified Compact Status & Meta Badges Bar */}
+          <div className="mt-3 pt-2.5 border-t border-[#27272A]/70 flex flex-wrap items-center justify-center gap-1.5 text-[10px] font-mono">
+            <span className={`border px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider flex items-center gap-1.5 ${
               isRejected 
                 ? 'bg-red-500/10 border-red-500/30 text-red-400' 
                 : isSuccess 
@@ -636,7 +815,7 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
                     ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
                     : 'bg-[#1C1C21] border-[#2A2A32] text-white'
             }`}>
-              <span className={`w-2 h-2 rounded-full ${
+              <span className={`w-1.5 h-1.5 rounded-full ${
                 isRejected 
                   ? 'bg-red-500' 
                   : isSuccess 
@@ -650,8 +829,8 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
                 : isSuccess 
                   ? 'Proposta Aprovada' 
                   : (proposta?.criadoEm && Date.now() > (proposta.criadoEm + ((proposta.validadeDias || empresaConfig?.painelConfiguracao?.validadeOrcamentoDias || 7) * 86400000)))
-                    ? `Proposta Expirada #${proposta.id}`
-                    : `Proposta Ativa #${proposta.id}`}
+                    ? `Expirada #${proposta.id}`
+                    : `Proposta #${proposta.id}`}
             </span>
 
             {/* DATA DE GERAÇÃO E TEMPO DE VALIDADE DO ORÇAMENTO */}
@@ -662,31 +841,32 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
               const isExpirado = Date.now() > dataExpiracao.getTime();
 
               return (
-                <div className="flex flex-wrap justify-center items-center gap-2">
-                  <div className="text-[11px] text-[#A1A1AA] font-mono flex items-center gap-1.5 bg-[#1C1C21]/80 px-3 py-1 rounded-full border border-[#27272A]">
-                    <Calendar size={12} className="text-[#D4AF37]" />
+                <>
+                  <div className="text-[#A1A1AA] flex items-center gap-1 bg-[#1C1C21]/90 px-2.5 py-0.5 rounded-full border border-[#27272A]">
+                    <Calendar size={11} className="text-[#D4AF37]" />
                     <span>
-                      Gerado em: {dataGeracao.toLocaleDateString('pt-BR')} às {dataGeracao.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      {dataGeracao.toLocaleDateString('pt-BR')} às {dataGeracao.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                     </span>
                   </div>
 
-                  <div className={`text-[11px] font-mono flex items-center gap-1.5 px-3 py-1 rounded-full border ${
+                  <div className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full border ${
                     isExpirado 
                       ? 'bg-red-500/10 border-red-500/30 text-red-400 font-semibold' 
-                      : 'bg-[#1C1C21]/80 border-[#27272A] text-[#D4AF37]'
+                      : 'bg-[#1C1C21]/90 border-[#27272A] text-[#D4AF37]'
                   }`}>
-                    <Clock size={12} className={isExpirado ? 'text-red-400' : 'text-[#D4AF37]'} />
+                    <Clock size={11} className={isExpirado ? 'text-red-400' : 'text-[#D4AF37]'} />
                     <span>
-                      Validade: {validadeDias} dia(s) ({isExpirado ? `Expirou em ${dataExpiracao.toLocaleDateString('pt-BR')}` : `Válida até ${dataExpiracao.toLocaleDateString('pt-BR')}`})
+                      {isExpirado ? `Expirou em ${dataExpiracao.toLocaleDateString('pt-BR')}` : `Válido até ${dataExpiracao.toLocaleDateString('pt-BR')} (${validadeDias}d)`}
                     </span>
                   </div>
-                </div>
+                </>
               );
             })()}
           </div>
+
           {introText && (
-            <div className="mt-6 pt-5 border-t border-[#27272A] text-center max-w-md mx-auto">
-              <p className="text-xs text-[#A1A1AA] leading-relaxed italic">
+            <div className="mt-3 pt-3 border-t border-[#27272A]/70 text-left sm:text-center max-w-xl mx-auto bg-[#18181B]/50 px-4 py-3 rounded-xl border border-[#27272A]/40 shadow-inner">
+              <p className="text-[14px] text-[#E4E4E7] leading-relaxed italic whitespace-pre-wrap">
                 "{introText}"
               </p>
             </div>
@@ -770,10 +950,42 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
                 </div>
               </div>
 
+              {(reservaGerada?.endereco || endereco) && (
+                <div className="pt-3 border-t border-[#2A2A32] text-xs">
+                  <span className="text-[#71717A] block">Local do Evento / Entrega</span>
+                  <span className="text-white font-semibold block mt-0.5 whitespace-pre-wrap">{reservaGerada?.endereco || endereco}</span>
+                </div>
+              )}
+
+              {(reservaGerada?.observacoes || observacoes) && (
+                <div className="pt-3 border-t border-[#2A2A32] text-xs">
+                  <span className="text-[#71717A] block">Observações e Solicitações Especiais:</span>
+                  <span className="text-white font-semibold block mt-0.5 whitespace-pre-wrap italic">"{reservaGerada?.observacoes || observacoes}"</span>
+                </div>
+              )}
+
+              {(reservaGerada?.contratarMontagem || contratarMontagem) && (
+                <div className="pt-3 border-t border-[#2A2A32] flex justify-between items-center text-xs">
+                  <span className="text-[#71717A] flex items-center gap-1.5">
+                    <Wrench size={13} className="text-[#D4AF37]" /> Serviço de Montagem:
+                  </span>
+                  <span className="text-[#D4AF37] font-bold bg-[#D4AF37]/15 px-2 py-0.5 rounded border border-[#D4AF37]/30 text-[10px]">
+                    Contratado com a Locadora
+                  </span>
+                </div>
+              )}
+
               <div className="pt-3 border-t border-[#2A2A32] flex justify-between items-center">
                 <span className="text-[#71717A] text-xs">Duração da Locação:</span>
                 <span className="text-white font-bold text-xs">{reservaGerada?.diasLocacao || diasLocacao} dia(s)</span>
               </div>
+
+              {(reservaGerada?.valorFrete > 0 || valorFrete > 0) && (
+                <div className="pt-3 border-t border-[#2A2A32] flex justify-between items-center">
+                  <span className="text-[#71717A] text-xs">Custo de Frete ({reservaGerada?.distanciaKm || distanciaKm} Km):</span>
+                  <span className="text-white font-semibold text-xs">{formatarMoeda(reservaGerada?.valorFrete || valorFrete)}</span>
+                </div>
+              )}
 
               <div className="pt-3 border-t border-[#2A2A32] flex justify-between items-center">
                 <span className="text-[#71717A] text-xs">Valor Total Estimado:</span>
@@ -1049,6 +1261,91 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
                   />
                 </div>
 
+                {/* NOVO: Campos Separados de Local do Evento / Endereço de Entrega */}
+                <div className="p-3.5 bg-[#141416] border border-[#27272A] rounded-2xl">
+                  <EnderecoFormFields
+                    value={addressData}
+                    onChange={(newAddr) => {
+                      setAddressData(newAddr);
+                      setEndereco(formatEnderecoCompleto(newAddr));
+                    }}
+                    labelPrefix="Local do Evento"
+                  />
+                </div>
+
+                {/* PAINEL DE ESTIMATIVA DE FRETE PARA O CLIENTE */}
+                {endereco && (
+                  <div className="p-4 bg-[#141416] border border-[#27272A] rounded-2xl space-y-3 animate-fadeIn">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#27272A] pb-2">
+                      <div className="flex items-center gap-1.5">
+                        <MapPin size={14} className="text-[#D4AF37]" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-white">Estimativa de Frete</span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={calculandoFrete || !endereco?.trim()}
+                        onClick={async () => {
+                          setCalculandoFrete(true);
+                          try {
+                            const res = await calcularDistanciaRealOuSimulada(
+                              empresaConfig?.enderecoCompleto || 'Rua das Flores, 100 - São Paulo, SP',
+                              endereco,
+                              empresaConfig?.googleMapsApiKey
+                            );
+                            setDistanciaKm(res.distanciaKm);
+                            const calculated = calcularValorFrete(res.distanciaKm, valorFretePorKm);
+                            setValorFrete(calculated);
+                          } catch (err) {
+                            console.error(err);
+                          } finally {
+                            setCalculandoFrete(false);
+                          }
+                        }}
+                        className="px-3 py-1 bg-[#D4AF37] hover:bg-[#E5C158] text-black text-[10px] font-bold rounded-lg cursor-pointer transition-all disabled:opacity-50"
+                      >
+                        {calculandoFrete ? 'Calculando...' : 'Calcular Frete'}
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+                      <div>
+                        <span className="block text-[9px] text-[#71717A] uppercase tracking-wider">Distância</span>
+                        <div className="font-mono font-bold text-white mt-0.5">{distanciaKm} Km</div>
+                      </div>
+                      <div>
+                        <span className="block text-[9px] text-[#71717A] uppercase tracking-wider">Valor por Km</span>
+                        <div className="font-mono text-white mt-0.5">{formatarMoeda(valorFretePorKm)}</div>
+                      </div>
+                      <div className="col-span-2 sm:col-span-1">
+                        <span className="block text-[9px] text-[#71717A] uppercase tracking-wider">Valor Frete</span>
+                        <div className="font-mono font-extrabold text-emerald-400 mt-0.5">{formatarMoeda(valorFrete)}</div>
+                      </div>
+                    </div>
+                    {distanciaKm > 0 && (
+                      <p className="text-[9px] text-[#71717A] leading-tight">
+                        * Cálculo baseado no deslocamento a partir de nossa sede em <span className="italic">{empresaConfig?.enderecoCompleto || 'Rua das Flores, 100'}</span>.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* NOVO: Campo descritivo de Observações / Solicitações Especiais do Cliente */}
+                <div>
+                  <label className="block text-[#A1A1AA] font-bold mb-1 uppercase tracking-wider text-[10px]">Observações e Solicitações Especiais (Opcional)</label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-3 text-[#71717A]">
+                      <MessageSquare size={14} />
+                    </span>
+                    <textarea
+                      rows={2}
+                      placeholder="Ex: Horário preferencial para entrega, acesso por elevador de carga, pedidos de arranjo ou detalhes específicos..."
+                      value={observacoes}
+                      onChange={(e) => setObservacoes(e.target.value)}
+                      className="w-full pl-9.5 pr-3.5 py-2.5 bg-[#111113] border border-[#27272A] rounded-xl text-white focus:border-[#D4AF37] focus:outline-none placeholder-[#71717A] text-xs font-semibold leading-relaxed resize-y"
+                    />
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[#A1A1AA] font-bold mb-1 uppercase tracking-wider text-[10px]">Data Retirada (Início)</label>
@@ -1071,6 +1368,42 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
                     />
                   </div>
                 </div>
+
+                {/* NOVO: CHECKBOX DE CONTRATAÇÃO DE MONTAGEM */}
+                <div 
+                  onClick={() => setContratarMontagem(!contratarMontagem)}
+                  className={`p-4 rounded-2xl border transition-all cursor-pointer select-none flex items-start gap-3.5 ${
+                    contratarMontagem
+                      ? 'bg-[#1C1C21] border-[#D4AF37]/60 shadow-lg shadow-[#D4AF37]/5'
+                      : 'bg-[#111113] border-[#27272A] hover:border-[#3F3F46]'
+                  }`}
+                >
+                  <div className="pt-0.5 shrink-0">
+                    <div 
+                      className={`w-5 h-5 rounded-md flex items-center justify-center transition-all ${
+                        contratarMontagem 
+                          ? 'bg-[#D4AF37] text-black font-extrabold shadow-sm' 
+                          : 'border border-[#52525B] bg-[#18181B]'
+                      }`}
+                    >
+                      {contratarMontagem ? <Check size={14} strokeWidth={3} /> : null}
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Wrench size={15} className={contratarMontagem ? 'text-[#D4AF37]' : 'text-[#71717A]'} />
+                      <span className={`text-xs font-bold ${contratarMontagem ? 'text-white' : 'text-[#D4D4D8]'}`}>
+                        Contratar Serviço de Montagem e Desmontagem
+                      </span>
+                      <span className="text-[9px] bg-[#D4AF37]/15 text-[#D4AF37] font-semibold px-2 py-0.5 rounded-full border border-[#D4AF37]/30">
+                        Opcional
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#A1A1AA] mt-1 leading-relaxed">
+                      Desejo que a equipe técnica especializada da locadora realize a montagem completa e desmontagem pós-evento de todas as peças e estruturas no local informado.
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1080,10 +1413,29 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
                 <span className="text-[#A1A1AA]">Soma dos itens selecionados:</span>
                 <span className="text-white font-semibold">{formatarMoeda(subtotal)} / dia</span>
               </div>
-              <div className="flex justify-between items-center text-xs border-b border-[#27272A] pb-3">
+              <div className="flex justify-between items-center text-xs">
                 <span className="text-[#A1A1AA]">Duração total da locação:</span>
                 <span className="text-white font-semibold font-mono">{diasLocacao} {diasLocacao === 1 ? 'dia' : 'dias'}</span>
               </div>
+              {valorFrete > 0 && (
+                <div className="flex justify-between items-center text-xs text-emerald-400 font-semibold border-t border-[#27272A]/40 pt-2.5">
+                  <span className="flex items-center gap-1">
+                    <MapPin size={12} /> Custo de Frete Estimado ({distanciaKm} Km):
+                  </span>
+                  <span>{formatarMoeda(valorFrete)}</span>
+                </div>
+              )}
+              {contratarMontagem && (
+                <div className="flex justify-between items-center text-xs text-[#D4AF37] font-semibold border-t border-[#27272A]/40 pt-2.5">
+                  <span className="flex items-center gap-1.5">
+                    <Wrench size={13} /> Serviço de Montagem & Desmontagem:
+                  </span>
+                  <span className="bg-[#D4AF37]/15 text-[#D4AF37] px-2 py-0.5 rounded text-[10px] font-bold border border-[#D4AF37]/30">
+                    Incluso no Agendamento
+                  </span>
+                </div>
+              )}
+              <div className="border-b border-[#27272A] pb-1" />
 
               {/* CALÇÃO DE GARANTIA DE RESERVA */}
               {percentualCalcao > 0 && (

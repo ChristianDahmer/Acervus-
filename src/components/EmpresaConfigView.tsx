@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { googleSignIn } from '../lib/googleWorkspace';
-import { EmpresaConfig, ThemeConfig, GoogleAccountConfig, CategoriaItem, ItemAcervo, ListVisibilityConfig, DispositivoAutorizado, FormularioWeb, Cliente, ReservaComItens, GovBrConfig } from '../types';
+import { EmpresaConfig, ThemeConfig, GoogleAccountConfig, CategoriaItem, ItemAcervo, ListVisibilityConfig, DispositivoAutorizado, FormularioWeb, Cliente, ReservaComItens, GovBrConfig, RAMOS_ATUACAO_LOCACAO } from '../types';
 import { GOVBR_ENDPOINTS } from '../lib/govbrSignature';
 import { COLOR_PRESETS, THEME_MODE_PRESETS, getContrastTextColor } from '../utils/themeUtils';
 import { CategoriasView } from './CategoriasView';
@@ -12,9 +12,16 @@ import { InstagramSorteioModule } from './InstagramSorteioModule';
 import { WebFormModal } from './WebFormModal';
 import { PersonalizacaoAbasView } from './PersonalizacaoAbasView';
 import { PainelConfiguracaoView } from './PainelConfiguracaoView';
+import { PlanoAssinaturaSuporteView } from './PlanoAssinaturaSuporteView';
+import { GuiaSistemaArquiteturaView } from './GuiaSistemaArquiteturaView';
 import { saveDocument, getActiveTenantId } from '../lib/firebaseSync';
+import { getAppLogoUrl, handleLogoError } from '../utils/logoUtils';
+import { formatCurrencyBRL, parseCurrencyBRLToNumber } from '../utils/currencyMask';
+import { EnderecoFormFields } from './EnderecoFormFields';
+import { formatEnderecoCompleto, parseEnderecoCompleto, AddressData } from '../utils/addressUtils';
 import {
   Building2,
+  Crown,
   FileSpreadsheet,
   Save,
   CheckCircle,
@@ -49,6 +56,7 @@ import {
   CheckCircle2,
   Lock,
   Camera,
+  Upload,
   Image as ImageIcon,
   Bell,
   Clock,
@@ -95,7 +103,7 @@ interface EmpresaConfigViewProps {
   onDeleteCategoria?: (id: string) => void;
   onUpdateItemCategoria?: (oldName: string, newName: string) => void;
   onBatchRemapCategory?: (sourceName: string, targetName: string) => void;
-  initialSubTab?: 'empresa' | 'painel_configuracao' | 'categorias' | 'personalizacao_abas' | 'whatsapp' | 'tema' | 'google_forms' | 'govbr' | 'permissoes' | 'dispositivos' | 'sincronizacao' | 'developer' | 'instagram_sorteio' | 'admin_dados' | 'guia_arquitetura';
+  initialSubTab?: 'empresa' | 'planos_assinatura' | 'painel_configuracao' | 'categorias' | 'personalizacao_abas' | 'whatsapp' | 'tema' | 'google_forms' | 'govbr' | 'permissoes' | 'dispositivos' | 'sincronizacao' | 'developer' | 'instagram_sorteio' | 'admin_dados' | 'guia_arquitetura';
   dispositivos?: DispositivoAutorizado[];
   onUpdateDispositivoStatus?: (id: string, newStatus: 'PENDENTE' | 'APROVADO' | 'REJEITADO' | 'REVOGADO', extraData?: Partial<DispositivoAutorizado>) => void;
   onDeleteDispositivo?: (id: string) => void;
@@ -118,6 +126,7 @@ interface EmpresaConfigViewProps {
   ) => void;
   authenticatedDevice?: DispositivoAutorizado | null;
   onNavigateToCreateOrcamento?: () => void;
+  onOpenOnboardingWizard?: () => void;
 }
 
 export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
@@ -149,8 +158,9 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
   onCreateGoogleForm = () => {},
   onSimulateCustomerSubmit = () => {},
   onNavigateToCreateOrcamento,
+  onOpenOnboardingWizard,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'empresa' | 'painel_configuracao' | 'categorias' | 'personalizacao_abas' | 'whatsapp' | 'tema' | 'google_forms' | 'govbr' | 'permissoes' | 'dispositivos' | 'sincronizacao' | 'developer' | 'instagram_sorteio' | 'admin_dados' | 'guia_arquitetura'>(
+  const [activeSubTab, setActiveSubTab] = useState<'empresa' | 'planos_assinatura' | 'painel_configuracao' | 'categorias' | 'personalizacao_abas' | 'whatsapp' | 'tema' | 'google_forms' | 'govbr' | 'permissoes' | 'dispositivos' | 'sincronizacao' | 'developer' | 'instagram_sorteio' | 'admin_dados' | 'guia_arquitetura'>(
     initialSubTab
   );
 
@@ -172,6 +182,11 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
       title: 'Dados Cadastrais da Empresa',
       subtitle: 'Gerencie as informações oficiais, CNPJ, representante legal e endereço da empresa.',
       icon: Building2,
+    },
+    planos_assinatura: {
+      title: 'Planos de Licença & Assistência Técnica',
+      subtitle: 'Gerencie sua assinatura, faturas recorrentes, níveis de suporte prioritário e chamados.',
+      icon: Crown,
     },
     painel_configuracao: {
       title: 'Painel de Configuração Geral',
@@ -343,6 +358,10 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
   const [editingNomeDispositivo, setEditingNomeDispositivo] = useState<string>('');
   const [editingTelefone, setEditingTelefone] = useState<string>('');
   const [editingCnpjEmpresa, setEditingCnpjEmpresa] = useState<string>('');
+  const [editingSenha, setEditingSenha] = useState<string>('');
+  // NOVO: Controle de visibilidade segura da senha (oculta por padrão)
+  const [showEditingSenha, setShowEditingSenha] = useState<boolean>(false);
+  const [showNovoUsuarioSenha, setShowNovoUsuarioSenha] = useState<boolean>(false);
 
   useEffect(() => {
     if (editingPermissionsDev) {
@@ -351,9 +370,11 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
       setEditingUsuario(editingPermissionsDev.usuario || '');
       setEditingNomeDispositivo(editingPermissionsDev.nomeDispositivo || '');
       setEditingTelefone(editingPermissionsDev.telefone || '');
-      setEditingCnpjEmpresa(editingPermissionsDev.cnpjEmpresa || '');
+      setEditingCnpjEmpresa(editingPermissionsDev.cnpjEmpresa || empresaConfig?.cnpj || '');
+      setEditingSenha(editingPermissionsDev.senha || '');
+      setShowEditingSenha(false); // NOVO: Garante senha oculta ao abrir
     }
-  }, [editingPermissionsDev]);
+  }, [editingPermissionsDev, empresaConfig?.cnpj]);
 
   const handleFocusScroll = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     setTimeout(() => {
@@ -744,7 +765,10 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
     e.preventDefault();
     onSaveConfig(empresaData);
     setIsEmpresaSaved(true);
-    setTimeout(() => setIsEmpresaSaved(false), 3000);
+    setTimeout(() => {
+      setIsEmpresaSaved(false);
+      setActiveSubTab('painel_configuracao'); // Fecha o modal ao salvar e retorna ao painel
+    }, 1000);
   };
 
 
@@ -798,14 +822,51 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
             {subTabMeta[activeSubTab]?.subtitle || "Gerencie as informações oficiais da locadora e customize a paleta visual do aplicativo com ajuste automático de contraste."}
           </p>
         </div>
-        <div id="subtab-header-actions" className="flex items-center gap-3 w-full md:w-auto shrink-0" />
+        <div id="subtab-header-actions" className="flex items-center gap-3 w-full md:w-auto shrink-0">
+          {activeSubTab === 'google_forms' && onNavigateToCreateOrcamento && (
+            <button
+              onClick={onNavigateToCreateOrcamento}
+              className="flex items-center justify-center gap-2 bg-[#D4AF37] hover:bg-[#c4a02e] text-black px-4 py-2.5 rounded-xl text-xs font-bold transition-all shadow-lg cursor-pointer w-full md:w-auto shrink-0 whitespace-nowrap animate-fade-in"
+            >
+              <Plus size={15} />
+              <span>Gerar Novo Orçamento</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* TAB 1: DADOS DA EMPRESA */}
+      {/* TAB 1: DADOS DA EMPRESA (MODAL) */}
       {activeSubTab === 'empresa' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Form: Editable Fields (12 cols) */}
-          <div className="lg:col-span-12 max-w-5xl mx-auto w-full space-y-6">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto animate-fadeIn">
+          <div className="bg-[#111113] border border-[#27272A] rounded-3xl p-6 md:p-8 shadow-2xl max-w-4xl w-full max-h-[92vh] overflow-y-auto relative space-y-6">
+            <button
+              onClick={() => setActiveSubTab('painel_configuracao')}
+              className="absolute top-6 right-6 p-2 rounded-xl bg-[#18181B] hover:bg-[#27272A] text-[#A1A1AA] hover:text-white transition-all cursor-pointer border border-[#27272A] z-10"
+              title="Fechar"
+            >
+              <X size={18} />
+            </button>
+
+            {onOpenOnboardingWizard && (
+              <div className="bg-gradient-to-r from-[#18181C] via-[#1E1E24] to-[#18181C] border border-[#D4AF37]/30 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#D4AF37]/10 border border-[#D4AF37]/30 flex items-center justify-center shrink-0">
+                    <Sparkles className="text-[#D4AF37] animate-pulse" size={20} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">Assistente de Configuração Inteligente (IA)</h4>
+                    <p className="text-[11px] text-[#A1A1AA]">Prefere configurar sua empresa com auxílio passo-a-passo da Inteligência Artificial?</p>
+                  </div>
+                </div>
+                <button
+                  onClick={onOpenOnboardingWizard}
+                  className="bg-gradient-to-r from-[#D4AF37] to-[#8B7326] text-black font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-2 hover:scale-105 active:scale-95 transition-all shadow-md shadow-[#D4AF37]/20 cursor-pointer whitespace-nowrap"
+                >
+                  <Sparkles size={14} /> Iniciar Assistente IA
+                </button>
+              </div>
+            )}
+
             {isNewClientWelcome && (
               <div className="bg-gradient-to-r from-[#D4AF37]/20 via-[#D4AF37]/10 to-[#D4AF37]/20 border-2 border-[#D4AF37] p-5 rounded-2xl text-white shadow-2xl space-y-2 animate-fadeIn">
                 <div className="flex items-center gap-2 text-[#D4AF37] font-bold text-sm uppercase tracking-wider">
@@ -817,8 +878,6 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
               </div>
             )}
 
-
-
             <div className="bg-[#111113] border border-[#27272A] rounded-2xl p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between border-b border-[#27272A] pb-4">
               <h3 className="font-serif italic text-white text-lg flex items-center gap-2">
@@ -827,66 +886,113 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
               </h3>
               {isEmpresaSaved && (
                 <span className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-3 py-1 rounded-full text-xs font-semibold animate-fade-in">
-                  <CheckCircle size={14} /> Salvo com Sucesso!
+                  <CheckCircle size={14} /> Salvo e Fechado com Sucesso!
                 </span>
               )}
             </div>
 
             <form onSubmit={handleEmpresaSubmit} className="space-y-4 text-xs">
-              {/* Nome Fantasia & Razão Social */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center gap-1">
-                    <Building2 size={14} className="text-[#D4AF37]" /> Nome Fantasia
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={empresaData.nomeFantasia}
-                    onChange={(e) => handleEmpresaChange('nomeFantasia', e.target.value)}
-                    onFocus={handleFocusScroll}
-                    placeholder="Ex: Bora Festar Locações"
-                    className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center gap-1">
-                    <Building2 size={14} className="text-[#D4AF37]" /> Razão Social
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={empresaData.razaoSocial}
-                    onChange={(e) => handleEmpresaChange('razaoSocial', e.target.value)}
-                    onFocus={handleFocusScroll}
-                    placeholder="Ex: Bora Festar Eventos LTDA"
-                    className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all"
-                  />
-                </div>
+              {/* Nome Fantasia (em uma linha) */}
+              <div>
+                <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center gap-1">
+                  <Building2 size={14} className="text-[#D4AF37]" /> Nome Fantasia
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={empresaData.nomeFantasia}
+                  onChange={(e) => handleEmpresaChange('nomeFantasia', e.target.value)}
+                  onFocus={handleFocusScroll}
+                  placeholder="Ex: Bora Festar Locações"
+                  className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all"
+                />
               </div>
 
-              {/* CNPJ & Telefone/WhatsApp */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center gap-1">
-                    <Hash size={14} className="text-[#D4AF37]" /> CNPJ
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={empresaData.cnpj}
-                    onChange={(e) => handleEmpresaChange('cnpj', e.target.value)}
-                    onFocus={handleFocusScroll}
-                    placeholder="00.000.000/0001-00"
-                    className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
-                  />
-                </div>
+              {/* Razão Social (em uma linha) */}
+              <div>
+                <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center gap-1">
+                  <Building2 size={14} className="text-[#D4AF37]" /> Razão Social
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={empresaData.razaoSocial}
+                  onChange={(e) => handleEmpresaChange('razaoSocial', e.target.value)}
+                  onFocus={handleFocusScroll}
+                  placeholder="Ex: Bora Festar Eventos LTDA"
+                  className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all"
+                />
+              </div>
 
+              {/* CNPJ (em uma linha) */}
+              <div>
+                <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center gap-1">
+                  <Hash size={14} className="text-[#D4AF37]" /> CNPJ
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={empresaData.cnpj}
+                  onChange={(e) => handleEmpresaChange('cnpj', e.target.value)}
+                  onFocus={handleFocusScroll}
+                  placeholder="00.000.000/0001-00"
+                  className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
+                />
+              </div>
+
+              {/* Ramo de Atuação da Empresa (Combobox com ramos de locação) */}
+              <div>
+                <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Layers size={14} className="text-[#D4AF37]" /> Ramo de Atuação (Segmento de Locação)
+                  </span>
+                  <span className="text-[10px] text-[#D4AF37] bg-[#D4AF37]/10 px-2 py-0.5 rounded border border-[#D4AF37]/30">
+                    Expansão Multi-Locadora
+                  </span>
+                </label>
+                <div className="relative">
+                  <select
+                    value={empresaData.ramoAtuacao || RAMOS_ATUACAO_LOCACAO[0]}
+                    onChange={(e) => handleEmpresaChange('ramoAtuacao', e.target.value)}
+                    onFocus={handleFocusScroll}
+                    className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all appearance-none cursor-pointer pr-10"
+                  >
+                    {RAMOS_ATUACAO_LOCACAO.map((ramo) => (
+                      <option key={ramo} value={ramo} className="bg-[#18181B] text-white py-1">
+                        {ramo}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="absolute inset-y-0 right-0 flex items-center px-3 pointer-events-none text-[#71717A]">
+                    <ChevronDown size={16} />
+                  </div>
+                </div>
+                <p className="text-[11px] text-[#71717A] mt-1.5">
+                  Define o segmento de mercado e parametrização de acervo da sua empresa locadora.
+                </p>
+              </div>
+
+              {/* Telefone / WhatsApp da Empresa e Telefones Adicionais (em uma linha com botão de adicão) */}
+              <div className="space-y-3">
                 <div>
-                  <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center gap-1">
-                    <Phone size={14} className="text-[#D4AF37]" /> Telefone / WhatsApp da Empresa
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block font-medium text-[#A1A1AA] flex items-center gap-1">
+                      <Phone size={14} className="text-[#D4AF37]" /> Telefone / WhatsApp da Empresa
+                    </label>
+                    <button
+                      type="button"
+                      id="btn-add-telefone"
+                      onClick={() => {
+                        const currentList = empresaData.telefonesAdicionais || [];
+                        handleEmpresaChange('telefonesAdicionais', [...currentList, '']);
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-[#D4AF37] bg-[#D4AF37]/10 hover:bg-[#D4AF37]/20 border border-[#D4AF37]/30 rounded-lg transition-all cursor-pointer"
+                      title="Adicionar Novo Telefone"
+                    >
+                      <Plus size={14} />
+                      <span>Telefone</span>
+                    </button>
+                  </div>
                   <PhoneInput
                     value={empresaData.telefoneWhatsapp}
                     onChange={(val) => handleEmpresaChange('telefoneWhatsapp', val)}
@@ -894,6 +1000,39 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                     placeholder="11 99999-8888"
                   />
                 </div>
+
+                {/* Campos para Telefones Adicionais */}
+                {(empresaData.telefonesAdicionais || []).map((tel, index) => (
+                  <div key={index} className="space-y-1.5 animate-fadeIn">
+                    <div className="flex items-center justify-between">
+                      <label className="block font-medium text-[#A1A1AA] flex items-center gap-1">
+                        <Phone size={14} className="text-[#A1A1AA]" /> Novo Telefone #{index + 1}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const currentList = [...(empresaData.telefonesAdicionais || [])];
+                          currentList.splice(index, 1);
+                          handleEmpresaChange('telefonesAdicionais', currentList);
+                        }}
+                        className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-bold text-red-400 bg-red-400/10 hover:bg-red-400/20 border border-red-400/20 rounded transition-all cursor-pointer"
+                        title="Remover Telefone"
+                      >
+                        <X size={12} />
+                        <span>Remover</span>
+                      </button>
+                    </div>
+                    <PhoneInput
+                      value={tel}
+                      onChange={(val) => {
+                        const currentList = [...(empresaData.telefonesAdicionais || [])];
+                        currentList[index] = val;
+                        handleEmpresaChange('telefonesAdicionais', currentList);
+                      }}
+                      placeholder="11 99999-8888"
+                    />
+                  </div>
+                ))}
               </div>
 
               {/* Nome do Representante */}
@@ -966,29 +1105,35 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                 ))}
               </div>
 
-              {/* Endereço Completo */}
-              <div>
-                <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center gap-1">
-                  <MapPin size={14} className="text-[#D4AF37]" /> Endereço Completo da Sede
-                </label>
-                <textarea
-                  required
-                  rows={2}
-                  value={empresaData.enderecoCompleto}
-                  onChange={(e) => handleEmpresaChange('enderecoCompleto', e.target.value)}
-                  onBlur={() => {
-                    const address = empresaData.enderecoCompleto?.trim();
-                    if (address) {
-                      const formattedAddress = encodeURIComponent(address);
-                      const constructedUrl = `https://maps.google.com/?q=${formattedAddress}`;
-                      if ((empresaData.linkMapaLocalizacao || '').trim() !== constructedUrl) {
-                        handleEmpresaChange('linkMapaLocalizacao', constructedUrl);
-                      }
-                    }
+              {/* Endereço Separado da Sede da Empresa */}
+              <div className="bg-[#18181C] p-4 rounded-xl border border-[#27272A] space-y-3">
+                <EnderecoFormFields
+                  value={{
+                    logradouro: empresaData.logradouro || parseEnderecoCompleto(empresaData.enderecoCompleto).logradouro || '',
+                    numero: empresaData.numero || parseEnderecoCompleto(empresaData.enderecoCompleto).numero || '',
+                    bairro: empresaData.bairro || parseEnderecoCompleto(empresaData.enderecoCompleto).bairro || '',
+                    cidade: empresaData.cidade || parseEnderecoCompleto(empresaData.enderecoCompleto).cidade || '',
+                    estado: empresaData.estado || parseEnderecoCompleto(empresaData.enderecoCompleto).estado || '',
+                    cep: empresaData.cep || '',
+                  }}
+                  onChange={(newAddr) => {
+                    const fullFormatted = formatEnderecoCompleto(newAddr);
+                    const constructedUrl = fullFormatted ? `https://maps.google.com/?q=${encodeURIComponent(fullFormatted)}` : '';
+                    setEmpresaData((prev) => ({
+                      ...prev,
+                      logradouro: newAddr.logradouro,
+                      numero: newAddr.numero,
+                      bairro: newAddr.bairro,
+                      cidade: newAddr.cidade,
+                      estado: newAddr.estado,
+                      cep: newAddr.cep,
+                      enderecoCompleto: fullFormatted,
+                      linkMapaLocalizacao: constructedUrl || prev.linkMapaLocalizacao,
+                    }));
+                    setIsEmpresaSaved(false);
                   }}
                   onFocus={handleFocusScroll}
-                  placeholder="Rua, Número, Bairro, Cidade - UF, CEP"
-                  className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all"
+                  labelPrefix="Sede da Empresa"
                 />
               </div>
 
@@ -1005,6 +1150,131 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                   placeholder="Ex: https://maps.app.goo.gl/JnL8m"
                   className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all"
                 />
+              </div>
+
+              {/* Identidade Visual & Logotipo da Empresa */}
+              <div className="bg-[#18181B] border border-[#27272A] rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="block font-medium text-white flex items-center gap-2 text-sm">
+                    <ImageIcon size={16} className="text-[#D4AF37]" /> Identidade Visual & Logotipo da Empresa
+                  </label>
+                  <span className="text-[10px] text-[#D4AF37] bg-[#D4AF37]/10 border border-[#D4AF37]/30 px-2.5 py-0.5 rounded-full font-semibold">
+                    Propostas & Relatórios PDF
+                  </span>
+                </div>
+                <p className="text-xs text-[#A1A1AA] leading-relaxed">
+                  Carregue a imagem da sua marca ou informe uma URL direta. Esta marca será exibida no cabeçalho das <strong>Propostas de Orçamento</strong>, <strong>Contratos em PDF</strong> e <strong>Relatórios Impressos</strong> da sua empresa.
+                </p>
+
+                <div className="flex flex-col sm:flex-row items-center gap-4 pt-1">
+                  {/* Image Preview Box */}
+                  <div className="relative w-28 h-28 bg-[#09090B] border-2 border-dashed border-[#3F3F46] rounded-xl flex items-center justify-center overflow-hidden shrink-0 group">
+                    {empresaData.logoUrl ? (
+                      <img
+                        src={getAppLogoUrl(empresaData.logoUrl)}
+                        alt="Logotipo da Empresa"
+                        onError={handleLogoError}
+                        className="w-full h-full object-contain p-2"
+                      />
+                    ) : (
+                      <div className="text-center p-2 text-[#71717A]">
+                        <ImageIcon size={24} className="mx-auto mb-1 opacity-50" />
+                        <span className="text-[10px] block font-mono">Sem Logo</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Controls: Upload File + URL Input */}
+                  <div className="space-y-2.5 w-full">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="flex items-center gap-1.5 px-3.5 py-2 bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A0A0B] rounded-xl font-bold text-xs cursor-pointer transition-all shadow-md">
+                        <Upload size={14} />
+                        <span>Enviar Imagem (PNG/JPG)</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              if (file.size > 3 * 1024 * 1024) {
+                                alert("A imagem selecionada excede o tamanho recomendado de 3MB.");
+                              }
+                              const reader = new FileReader();
+                              reader.onloadend = () => {
+                                if (typeof reader.result === 'string') {
+                                  handleEmpresaChange('logoUrl', reader.result);
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+
+                      {empresaData.logoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => handleEmpresaChange('logoUrl', '')}
+                          className="flex items-center gap-1 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-semibold transition-all cursor-pointer"
+                          title="Remover logotipo personalizado"
+                        >
+                          <X size={14} />
+                          <span>Remover Logo</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] text-[#A1A1AA] block">Ou insira a URL direta do logotipo:</label>
+                      <input
+                        type="url"
+                        value={empresaData.logoUrl || ''}
+                        onChange={(e) => handleEmpresaChange('logoUrl', e.target.value)}
+                        onFocus={handleFocusScroll}
+                        placeholder="https://exemplo.com/sua-logo.png"
+                        className="w-full px-3 py-2 bg-[#09090B] border border-[#27272A] rounded-xl text-white text-xs focus:border-[#D4AF37] focus:outline-none font-mono"
+                      />
+                    </div>
+                    <p className="text-[10px] text-[#71717A]">
+                      Formatos aceitos: PNG, JPG, WebP ou SVG. Recomendado fundo transparente.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Valor por Quilômetro do Frete & Chave Google Maps */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center gap-1">
+                    <DollarSign size={14} className="text-[#D4AF37]" /> Valor por Quilômetro do Frete (R$/Km)
+                  </label>
+                  <input
+                    type="text"
+                    value={formatCurrencyBRL(empresaData.valorFretePorKm)}
+                    onChange={(e) => handleEmpresaChange('valorFretePorKm', parseCurrencyBRLToNumber(e.target.value))}
+                    onFocus={handleFocusScroll}
+                    placeholder="R$ 0,00"
+                    className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center gap-1">
+                    <MapPin size={14} className="text-[#D4AF37]" /> Chave Google Maps API (Distance Matrix)
+                  </label>
+                  <input
+                    type="text"
+                    value={empresaData.googleMapsApiKey || ''}
+                    onChange={(e) => handleEmpresaChange('googleMapsApiKey', e.target.value)}
+                    onFocus={handleFocusScroll}
+                    placeholder="Opcional (Ex: AIzaSy...)"
+                    className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
+                  />
+                  <p className="text-[10px] text-[#71717A] mt-1">
+                    Usado para cálculo exato de rotas. Se omitido, o sistema utiliza o simulador de distância.
+                  </p>
+                </div>
               </div>
 
               {/* Configuração de Pagamento PIX */}
@@ -1170,6 +1440,14 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
           </div>
         </div>
       </div>
+      )}
+
+      {/* TAB 1.2: PLANOS DE ASSINATURA & SUPORTE */}
+      {activeSubTab === 'planos_assinatura' && (
+        <PlanoAssinaturaSuporteView
+          empresaConfig={empresaData}
+          onSaveConfig={onSaveConfig}
+        />
       )}
 
       {/* TAB 1.5: PAINEL DE CONFIGURAÇÃO */}
@@ -1893,6 +2171,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                   setNovoUsuarioNivel('OPERADOR');
                   setNovoUsuarioAparelho('');
                   setNovoUsuarioSenha('');
+                  setShowNovoUsuarioSenha(false);
                   setNovoUsuarioCreatedSeed(null);
                   setNovoUsuarioUuid('DEV-89A-' + Math.random().toString(36).substring(2, 8).toUpperCase());
                   setNovoUsuarioCnpj(empresaConfig?.cnpj || '');
@@ -2193,104 +2472,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
 
       {/* TAB 12: GUIA DO SISTEMA & ARQUITETURA */}
       {activeSubTab === 'guia_arquitetura' && (
-        authenticatedDevice?.nivelAcesso === 'DESENVOLVEDOR' ? (
-          <div className="bg-[#111113] border border-[#27272A] rounded-2xl p-6 shadow-2xl space-y-6 animate-fadeIn">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-[#27272A] pb-4">
-            <div>
-              <h3 className="font-serif italic text-white text-xl flex items-center gap-2">
-                <BookOpen className="text-[#D4AF37]" size={22} />
-                Guia do Sistema & Arquitetura (Acervus Core)
-              </h3>
-              <p className="text-xs text-[#A1A1AA] mt-1">
-                Especificação técnica oficial, Clean Architecture, banco local Room/SQLite e fluxos operacionais.
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                const text = `# ACERVUS CORE (GGERE) - ESPECIFICAÇÃO TÉCNICA
-Versão: 2.5.0-ENTERPRISE
-Arquitetura: Clean Architecture + MVVM + Dagger Hilt + Jetpack Compose
-Persistência: Android Room ORM / SQLite & Google Cloud Firestore
-`;
-                navigator.clipboard.writeText(text);
-                alert('Documentação copiada para a área de transferência!');
-              }}
-              className="px-4 py-2 bg-[#18181B] hover:bg-[#27272A] border border-[#27272A] text-[#D4AF37] rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-md"
-            >
-              <span>Copiar Especificação</span>
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-            <div className="bg-[#18181B] p-4 rounded-xl border border-[#27272A] space-y-2">
-              <div className="text-[#D4AF37] font-bold flex items-center gap-1.5">
-                <Layers size={16} /> Clean Architecture
-              </div>
-              <p className="text-[#A1A1AA] leading-relaxed">
-                Separação rigorosa entre Presentation (Jetpack Compose + MVVM), Domain (Use Cases puros) e Data (Room ORM + Firestore).
-              </p>
-            </div>
-            <div className="bg-[#18181B] p-4 rounded-xl border border-[#27272A] space-y-2">
-              <div className="text-[#D4AF37] font-bold flex items-center gap-1.5">
-                <HardDrive size={16} /> Offline-First Room & SQLite
-              </div>
-              <p className="text-[#A1A1AA] leading-relaxed">
-                Operações ACID locais garantem funcionamento integral em galpões sem internet, com sincronização em background.
-              </p>
-            </div>
-            <div className="bg-[#18181B] p-4 rounded-xl border border-[#27272A] space-y-2">
-              <div className="text-[#D4AF37] font-bold flex items-center gap-1.5">
-                <ShieldCheck size={16} /> Segurança Multi-Tenant & MDM
-              </div>
-              <p className="text-[#A1A1AA] leading-relaxed">
-                Isolamento estrito por `tenantId` e vínculo de hardware quádruplo (IMEI, CNPJ, Telefone e Usuário).
-              </p>
-            </div>
-          </div>
-
-          <div className="bg-[#18181B] rounded-xl border border-[#27272A] p-5 space-y-4">
-            <h4 className="font-bold text-white text-sm flex items-center gap-2">
-              <Code2 className="text-[#D4AF37]" size={18} /> Sumário Executivo & Módulos da Plataforma
-            </h4>
-            <div className="space-y-3 text-xs text-[#E4E4E7] leading-relaxed">
-              <div className="border-l-2 border-[#D4AF37] pl-3 py-1 space-y-1">
-                <p className="font-semibold text-white">1. Propósito do Sistema</p>
-                <p className="text-[#A1A1AA]">Automatizar a cadeia de locação de mobiliários e decorações para eventos, eliminando overbooking e reduzindo o tempo de fechamento de contratos.</p>
-              </div>
-              <div className="border-l-2 border-[#D4AF37] pl-3 py-1 space-y-1">
-                <p className="font-semibold text-white">2. Audio Engine v2 & Voz em Tempo Real</p>
-                <p className="text-[#A1A1AA]">Suporte a interrupções (Barge-In), cancelamento de eco por hardware e síntese de voz humanizada em Português do Brasil.</p>
-              </div>
-              <div className="border-l-2 border-[#D4AF37] pl-3 py-1 space-y-1">
-                <p className="font-semibold text-white">3. Assinatura Gov.br (Lei 14.063/2020)</p>
-                <p className="text-[#A1A1AA]">Geração de envelopes PKCS#7 / CMS com hash SHA-256 e validação oficial ICP-Brasil para contratos e orçamentos.</p>
-              </div>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-[#111113] border border-amber-500/30 rounded-2xl p-8 text-center space-y-4 max-w-xl mx-auto my-12 shadow-2xl animate-fadeIn">
-            <div className="p-4 bg-amber-500/10 border border-amber-500/30 text-amber-400 rounded-full w-16 h-16 mx-auto flex items-center justify-center">
-              <ShieldAlert size={32} />
-            </div>
-            <div className="space-y-2">
-              <h3 className="text-lg font-serif italic font-extrabold text-white">
-                Acesso Restrito ao Desenvolvedor
-              </h3>
-              <p className="text-xs text-[#A1A1AA] leading-relaxed">
-                O <strong>Guia do Sistema & Arquitetura</strong> está disponível exclusivamente para usuários autenticados com o nível de acesso <strong>DESENVOLVEDOR</strong>.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setActiveSubTab('empresa')}
-              className="px-6 py-2.5 bg-[#18181B] hover:bg-[#27272A] border border-[#27272A] text-white text-xs font-bold rounded-xl transition-all cursor-pointer inline-flex items-center gap-2"
-            >
-              <Building2 size={16} />
-              <span>Voltar aos Dados da Empresa</span>
-            </button>
-          </div>
-        )
+        <GuiaSistemaArquiteturaView />
       )}
 
       {/* TAB 11: GESTÃO DE DADOS BANCO DE DADOS CLOUD SQL */}
@@ -2505,28 +2687,56 @@ Persistência: Android Room ORM / SQLite & Google Cloud Firestore
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-semibold text-[#A1A1AA] mb-1">
-                      Telefone / Celular:
+                    <label className="block text-[11px] font-semibold text-[#A1A1AA] mb-1 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Lock size={12} className="text-[#D4AF37]" />
+                        CNPJ da Empresa:
+                      </span>
+                      <span className="text-[10px] text-[#71717A] italic font-normal">(Vinculado)</span>
                     </label>
                     <input
                       type="text"
-                      value={editingTelefone}
-                      onChange={(e) => setEditingTelefone(e.target.value)}
-                      placeholder="Ex: (54) 99988-7766"
-                      className="w-full px-3 py-2 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white focus:border-[#D4AF37] focus:outline-none font-mono"
+                      disabled
+                      readOnly
+                      value={editingCnpjEmpresa || empresaConfig?.cnpj || ''}
+                      placeholder="Ex: 12.345.678/0001-90"
+                      className="w-full px-3 py-2 bg-[#18181B]/50 border border-[#27272A] rounded-xl text-xs text-[#71717A] cursor-not-allowed font-mono focus:outline-none select-none"
+                      title="O CNPJ está vinculado permanentemente à empresa contratante e não pode ser alterado."
                     />
                   </div>
 
                   <div>
                     <label className="block text-[11px] font-semibold text-[#A1A1AA] mb-1">
-                      CNPJ da Empresa:
+                      Senha de Acesso:
                     </label>
-                    <input
-                      type="text"
-                      value={editingCnpjEmpresa}
-                      onChange={(e) => setEditingCnpjEmpresa(e.target.value)}
-                      placeholder="Ex: 12.345.678/0001-90"
-                      className="w-full px-3 py-2 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white focus:border-[#D4AF37] focus:outline-none font-mono"
+                    {/* ALTERADO: Senha oculta por padrão (type password) com alternador de visibilidade seguro */}
+                    <div className="relative flex items-center">
+                      <input
+                        type={showEditingSenha ? 'text' : 'password'}
+                        value={editingSenha}
+                        onChange={(e) => setEditingSenha(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full pl-3 pr-10 py-2 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white focus:border-[#D4AF37] focus:outline-none font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowEditingSenha(!showEditingSenha)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#71717A] hover:text-[#D4AF37] transition-colors p-1 cursor-pointer"
+                        title={showEditingSenha ? 'Ocultar senha' : 'Exibir senha'}
+                      >
+                        {showEditingSenha ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] font-semibold text-[#A1A1AA] mb-1">
+                      Telefone / Celular (com País / DDI):
+                    </label>
+                    <PhoneInput
+                      value={editingTelefone}
+                      onChange={(val) => setEditingTelefone(val)}
+                      placeholder="11 99999-8888"
                     />
                   </div>
                 </div>
@@ -2740,7 +2950,8 @@ Persistência: Android Room ORM / SQLite & Google Cloud Firestore
                     usuario: editingUsuario,
                     nomeDispositivo: editingNomeDispositivo,
                     telefone: editingTelefone,
-                    cnpjEmpresa: editingCnpjEmpresa,
+                    cnpjEmpresa: editingCnpjEmpresa || editingPermissionsDev.cnpjEmpresa || empresaConfig?.cnpj || '',
+                    senha: editingSenha,
                   });
                   setEditingPermissionsDev(null);
                 }}
@@ -2885,15 +3096,23 @@ Persistência: Android Room ORM / SQLite & Google Cloud Firestore
                     <label className="text-xs font-semibold text-[#A1A1AA] flex items-center gap-1.5">
                       <Key size={14} className="text-[#D4AF37]" /> Defina a Senha de Acesso
                     </label>
-                    <div className="relative">
+                    <div className="relative flex items-center">
                       <input
-                        type="password"
+                        type={showNovoUsuarioSenha ? 'text' : 'password'}
                         required
                         value={novoUsuarioSenha}
                         onChange={(e) => setNovoUsuarioSenha(e.target.value)}
                         placeholder="••••••••"
-                        className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
+                        className="w-full pl-3.5 pr-10 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowNovoUsuarioSenha(!showNovoUsuarioSenha)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[#71717A] hover:text-[#D4AF37] transition-colors p-1 cursor-pointer"
+                        title={showNovoUsuarioSenha ? 'Ocultar senha' : 'Exibir senha'}
+                      >
+                        {showNovoUsuarioSenha ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
                     </div>
                   </div>
 

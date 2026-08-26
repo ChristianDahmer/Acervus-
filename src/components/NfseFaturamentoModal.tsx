@@ -22,6 +22,7 @@ import {
 import { ReservaComItens, EmpresaConfig, StatusReserva } from '../types';
 import { formatarMoeda, formatarDataBr } from '../utils/whatsappTemplates';
 import { printHtmlContent } from '../utils/printUtils';
+import { limparDocumento } from '../utils/documentValidation';
 
 interface NfseFaturamentoModalProps {
   isOpen: boolean;
@@ -137,11 +138,11 @@ export const NfseFaturamentoModal: React.FC<NfseFaturamentoModalProps> = ({
     <dhEmi>${dataIso}</dhEmi>
     <verAplic>AcervusCore_v2.0.0</verAplic>
     <prestador>
-      <CNPJ>${empresaConfig?.cnpj?.replace(/\D/g, '') || '12345678000199'}</CNPJ>
+      <CNPJ>${limparDocumento(empresaConfig?.cnpj || '12345678000199')}</CNPJ>
       <IM>${empresaConfig?.nfseGovBrConfig?.inscricaoMunicipal || '827394'}</IM>
     </prestador>
     <tomador>
-      <CNPJ>${cnpjTomador.replace(/\D/g, '')}</CNPJ>
+      <CNPJ>${limparDocumento(cnpjTomador)}</CNPJ>
       <xNome>${nomeTomador.toUpperCase()}</xNome>
       <end>
         <xLgr>${logradouroTomador}</xLgr>

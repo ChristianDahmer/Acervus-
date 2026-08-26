@@ -168,6 +168,7 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
   // Instagram Config State
   const [instagramConfig, setInstagramConfig] = useState<InstagramConfig>(
     empresaConfig.instagramConfig || {
+      canalInstagram: '@acervus.core',
       apiClientId: '410294810293810',
       apiClientSecret: 'app_secret_7f8g9h1k2l3m4n5o6p',
       apiAccessToken: 'EAAdF8aZA5b6MBO4pZC2ZC1ZA9V9XyMvZCpK68D3l16Xf83hK0y7yZAZBcZApZAJZB1ZCs9mZB3oZD',
@@ -1370,7 +1371,7 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
                       </div>
                       <div>
                         <span className="text-[10px] text-[#A1A1AA] uppercase font-bold tracking-wider block">Canal Associado</span>
-                        <span className="text-white text-xs font-bold font-mono">@acervus.core</span>
+                        <span className="text-white text-xs font-bold font-mono">{instagramConfig.canalInstagram || '@acervus.core'}</span>
                       </div>
                     </div>
 
@@ -1408,6 +1409,32 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
 
                   {/* Form fields */}
                   <div className="space-y-4">
+                    {/* Canal / Perfil do Instagram */}
+                    <div>
+                      <label className="block text-xs font-bold text-[#A1A1AA] uppercase tracking-wider mb-1.5 font-mono flex items-center justify-between">
+                        <span>Canal / Perfil do Instagram (@)</span>
+                        <span className="text-[10px] text-pink-400 font-semibold font-mono">Conta Oficial de Eventos</span>
+                      </label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-pink-400 font-bold font-mono text-xs">
+                          @
+                        </div>
+                        <input
+                          type="text"
+                          value={(instagramConfig.canalInstagram || '').replace(/^@/, '')}
+                          onChange={(e) => {
+                            const clean = e.target.value.replace(/^@/, '').trim();
+                            handleInstagramChange('canalInstagram', clean ? `@${clean}` : '');
+                          }}
+                          className="w-full bg-[#18181B] border border-[#27272A] rounded-xl pl-8 pr-3.5 py-2.5 text-xs text-white focus:border-pink-500 focus:outline-none font-mono font-bold"
+                          placeholder="acervus.core"
+                        />
+                      </div>
+                      <p className="text-[10px] text-[#71717A] mt-1 font-mono">
+                        Identificador do canal do Instagram da empresa para sorteios, validação de engajamento e menções em Stories.
+                      </p>
+                    </div>
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-xs font-bold text-[#A1A1AA] uppercase tracking-wider mb-1.5 font-mono">App ID</label>
@@ -2760,29 +2787,7 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
         )}
       </div>
 
-      {/* Bottom Save Reminder */}
-      <div className="p-5 bg-gradient-to-r from-[#18181B] via-[#111113] to-[#18181B] rounded-2xl border border-[#27272A] flex flex-col sm:flex-row items-center justify-between gap-4 shadow-2xl">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-[#D4AF37]/10 text-[#D4AF37]">
-            <Info size={20} />
-          </div>
-          <div>
-            <span className="text-white text-xs font-bold block">Sincronização com o Banco de Dados</span>
-            <span className="text-[#71717A] text-[10px]">
-              As alterações aplicadas neste painel refletem instantaneamente em todos os terminais MDM conectados ao tenant.
-            </span>
-          </div>
-        </div>
 
-        <button
-          type="button"
-          onClick={handleSave}
-          className="w-full sm:w-auto px-6 py-2.5 bg-gradient-to-r from-[#D4AF37] to-[#B89628] hover:from-[#E5C158] hover:to-[#D4AF37] text-black font-bold rounded-xl text-xs shadow-lg shadow-[#D4AF37]/20 transition-all cursor-pointer shrink-0 flex items-center justify-center gap-2"
-        >
-          <Save size={15} />
-          <span>Salvar Parâmetros</span>
-        </button>
-      </div>
       {/* GOOGLE ACCOUNT SWITCHER MODAL */}
       {habilitarGoogleDrive && isAccountModalOpen && (
         <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-fadeIn">

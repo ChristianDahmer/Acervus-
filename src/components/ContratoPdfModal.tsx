@@ -4,6 +4,7 @@ import { formatarDataBr, formatarMoeda } from '../utils/whatsappTemplates';
 import { FileText, Printer, X, CheckCircle2, CloudLightning, ExternalLink, Loader2, ShieldCheck, Lock, RefreshCw, QrCode } from 'lucide-react';
 import { getAccessToken, googleSignIn, createGoogleDoc } from '../lib/googleWorkspace';
 import { executeGovBrSignature, maskCpf } from '../lib/govbrSignature';
+import { getAppLogoUrl, handleLogoError } from '../utils/logoUtils';
 import { QRCodeSVG } from 'qrcode.react';
 import { printElementById } from '../utils/printUtils';
 
@@ -221,6 +222,14 @@ Gerado em: ${formatarDataBr(Date.now())}
           {/* Header */}
           <div className="border-b-2 border-amber-600 pb-4 flex justify-between items-start">
             <div className="flex items-center gap-3">
+              {!!getAppLogoUrl(empresaConfig?.logoUrl) && (
+                <img
+                  src={getAppLogoUrl(empresaConfig?.logoUrl)}
+                  alt="Logo da Empresa"
+                  onError={handleLogoError}
+                  className="h-12 w-auto object-contain shrink-0"
+                />
+              )}
               <div>
                 <h1 className="text-xl font-black text-amber-700 tracking-tight uppercase">
                   {empresaConfig.nomeFantasia}

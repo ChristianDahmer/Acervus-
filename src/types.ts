@@ -24,7 +24,13 @@ export interface Cliente {
   telefone: string;
   email?: string;
   cpfCnpj?: string;
-  endereco?: string;
+  endereco?: string; // String concatenada de endereço
+  logradouro?: string; // Rua / Avenida
+  numero?: string; // Número do imóvel
+  bairro?: string; // Bairro
+  cidade?: string; // Cidade / Município
+  estado?: string; // Estado / UF
+  cep?: string; // Código de Endereçamento Postal
   observacoes?: string;
   ativo?: boolean; // Se false, cliente desativado (soft delete). Default: true
 }
@@ -69,6 +75,19 @@ export interface Reserva {
   nfseChaveAcesso?: string;
   nfseProtocolo?: string;
   nfseDataEmissao?: number;
+  endereco?: string; // NOVO: Local do Evento / Endereço de entrega
+  logradouro?: string; // Rua / Avenida do local do evento
+  numero?: string; // Número
+  bairro?: string; // Bairro
+  cidade?: string; // Cidade / Município
+  estado?: string; // UF
+  cep?: string; // CEP
+  observacoes?: string; // NOVO: Observações e solicitações especiais do cliente
+  valorFrete?: number; // NOVO: Valor calculado do frete
+  distanciaKm?: number; // NOVO: Distância em quilômetros
+  valorFretePorKm?: number; // NOVO: Valor por km cobrado nesta reserva
+  contratarMontagem?: boolean; // NOVO: Se o cliente contratou montagem/desmontagem no local
+  valorMontagem?: number; // NOVO: Valor cobrado pelo serviço de montagem
 }
 
 export interface ReservaComItens {
@@ -85,6 +104,25 @@ export interface FormularioWebItem {
   precoAluguel: number;
   imageUrl: string;
 }
+
+export const RAMOS_ATUACAO_LOCACAO = [
+  'Locação de Móveis e Decoração para Eventos (Casamentos, 15 Anos, Corporativos)',
+  'Locação de Brinquedos, Infláveis e Artigos para Festas Infantis',
+  'Locação de Equipamentos Audiovisuais, Iluminação, Som e Palcos',
+  'Locação de Louças, Pratarias, Toalhas e Gastronomia (Buffet)',
+  'Locação de Tendas, Coberturas, Estruturas e Tablados',
+  'Locação de Máquinas, Ferramentas e Equipamentos para Construção Civil',
+  'Locação de Equipamentos Médicos, Hospitalares e Acessibilidade',
+  'Locação de Vestuário, Trajes, Fantasias e Figurinos',
+  'Locação de Veículos, Utilitários, Reboques e Food Trucks',
+  'Locação de Eletrodomésticos, Climatização e Geradores de Energia',
+  'Locação de Cenografia, Stands e Feiras Comerciais',
+  'Locação de Artigos Esportivos, Náuticos e Lazer',
+  'Locação e Locadora Multissetorial em Geral',
+  'Outro Ramo de Locação',
+] as const;
+
+export type RamoAtuacaoLocacao = typeof RAMOS_ATUACAO_LOCACAO[number] | string;
 
 export interface FormularioWeb {
   id: string;
@@ -103,6 +141,8 @@ export interface FormularioWeb {
   recusado?: boolean;
   motivoRecusa?: string;
   dataRecusa?: number;
+  contratarMontagem?: boolean; // NOVO: Se o orçamento prevê opção de contratação de montagem
+  valorMontagem?: number; // NOVO: Valor da taxa de montagem
   resposta?: {
     clienteNome: string;
     clienteTelefone: string;
@@ -114,7 +154,23 @@ export interface FormularioWeb {
     dataAssinatura?: number;
     percentualCalcao?: number;
     valorCalcaoCalculado?: number;
+    endereco?: string; // NOVO: Local do evento ou endereço de entrega informado pelo cliente
+    logradouro?: string;
+    numero?: string;
+    bairro?: string;
+    cidade?: string;
+    estado?: string;
+    cep?: string;
+    observacoes?: string; // NOVO: Observações e solicitações especiais informadas pelo cliente
+    valorFrete?: number; // NOVO: Valor calculado do frete
+    distanciaKm?: number; // NOVO: Distância calculada
+    valorFretePorKm?: number; // NOVO: Valor por km cobrado
+    contratarMontagem?: boolean; // NOVO: Se o cliente marcou contratação de montagem
+    valorMontagem?: number; // NOVO: Valor da montagem contratada
   };
+  valorFrete?: number; // NOVO: Valor calculado do frete na proposta
+  distanciaKm?: number; // NOVO: Distância calculada na proposta
+  valorFretePorKm?: number; // NOVO: Valor por km cobrado na proposta
 }
 
 export interface CategoriaItem {
@@ -168,6 +224,7 @@ export interface NfseGovBrConfig {
 }
 
 export interface InstagramConfig {
+  canalInstagram?: string; // NOVO: Canal / Perfil do Instagram da empresa (ex: @acervus.core)
   apiClientId?: string;
   apiClientSecret?: string;
   apiAccessToken?: string;
@@ -224,12 +281,21 @@ export interface EmpresaConfig {
   nomeFantasia: string;
   razaoSocial: string;
   cnpj: string;
+  ramoAtuacao?: string; // NOVO: Ramo de atuação/segmento de locação da empresa
   enderecoCompleto: string;
+  logradouro?: string; // Rua / Avenida da Sede
+  numero?: string; // Número do imóvel
+  bairro?: string; // Bairro
+  cidade?: string; // Cidade / Município
+  estado?: string; // Estado / UF
+  cep?: string; // CEP
   telefoneWhatsapp: string;
+  telefonesAdicionais?: string[];
   nomeRepresentante: string;
   representantesAdicionais?: string[];
   logoUrl?: string;
   linkMapaLocalizacao?: string;
+  googleMapsApiKey?: string;
   email?: string;
   senhaAcesso?: string;
   emailConfirmationSeed?: string;
@@ -249,6 +315,7 @@ export interface EmpresaConfig {
   habilitarGoogleForms?: boolean;
   backupAutoDriveEnabled?: boolean;
   googleAccount?: GoogleAccountConfig;
+  valorFretePorKm?: number; // NOVO: Valor padrão cobrado por quilômetro de deslocamento para frete
   pixTipoChave?: 'CNPJ' | 'CPF' | 'E-MAIL' | 'TELEFONE' | 'CHAVE_ALEATORIA';
   pixChave?: string;
   bancoNome?: string;
@@ -257,6 +324,10 @@ export interface EmpresaConfig {
   bancoTipoConta?: 'CORRENTE' | 'POUPANCA';
   bancoBeneficiario?: string;
   bancoDocumento?: string;
+  // NOVO: Assinatura, Cobrança de Licença e Suporte Técnico
+  assinaturaAtiva?: AssinaturaAtual;
+  historicoFaturas?: FaturaAssinatura[];
+  chamadosSuporte?: ChamadoSuporte[];
 }
 
 export interface ThemeConfig {
@@ -319,6 +390,83 @@ export interface ModeloContrato {
   descricao?: string;
   origemImportacao?: string;
 }
+
+// NOVO: Estrutura para Gestão de Planos de Assinatura, Cobrança e Suporte
+export type NivelPlanoAssinatura = 'BRONZE' | 'PRATA' | 'OURO' | 'ENTERPRISE';
+export type NivelPlanoSuporte = 'BASICO' | 'PRIORITARIO_VIP' | 'TECNICO_247';
+
+export interface PlanoAssinatura {
+  id: string;
+  nome: string;
+  nivel: NivelPlanoAssinatura;
+  valorMensal: number;
+  valorAnualMensalizado: number; // Valor equivalente por mês no plano anual (com desconto)
+  descricao: string;
+  limiteOperadores: string; // Ex: "Até 3", "Até 10", "Ilimitados"
+  limiteItensAcervo: string; // Ex: "Até 1.000", "Ilimitado"
+  recursosInclusos: string[];
+  incluiIaGemini: boolean;
+  emissaoNfseInclusa: boolean;
+  recomendado?: boolean;
+}
+
+export interface PlanoSuporte {
+  id: string;
+  nome: string;
+  nivel: NivelPlanoSuporte;
+  valorMensal: number;
+  tempoRespostaSla: string; // Ex: "Até 24h", "Até 15 min", "Imediato 24/7"
+  canaisAtendimento: string[]; // Ex: ["E-mail/Ticket", "WhatsApp Dedicado", "Telefone/VIP"]
+  descricao: string;
+  destaque?: boolean;
+}
+
+export interface AssinaturaAtual {
+  planoId: string;
+  planoSuporteId: string;
+  cicloPagamento: 'MENSAL' | 'ANUAL';
+  status: 'ATIVO' | 'TRIAL' | 'PENDENTE_PAGAMENTO' | 'CANCELADO';
+  dataInicio: number; // timestamp
+  dataProximaRenovacao: number; // timestamp
+  valorTotalRecorrente: number;
+  metodoPagamentoPadrao: 'PIX' | 'CARTAO' | 'BOLETO';
+  autoRenovacao: boolean;
+}
+
+export interface FaturaAssinatura {
+  id: string;
+  codigoFatura: string;
+  dataEmissao: number;
+  dataVencimento: number;
+  dataPagamento?: number;
+  valor: number;
+  descricao: string;
+  status: 'PAGO' | 'PENDENTE' | 'CANCELADO';
+  metodoPagamento: 'PIX' | 'CARTAO' | 'BOLETO';
+  qrcodePixCode?: string;
+  linkBoletoPdf?: string;
+}
+
+export interface RespostaChamadoSuporte {
+  id: string;
+  autor: string;
+  isEquipeSuporte: boolean;
+  mensagem: string;
+  data: number;
+}
+
+export interface ChamadoSuporte {
+  id: string;
+  protocolo: string;
+  assunto: string;
+  prioridade: 'BAIXA' | 'MEDIA' | 'ALTA' | 'URGENTE';
+  moduloRelacionado: string;
+  descricao: string;
+  status: 'ABERTO' | 'EM_ATENDIMENTO' | 'AGUARDANDO_RESPOSTA' | 'CONCLUIDO';
+  dataAbertura: number;
+  respostas: RespostaChamadoSuporte[];
+}
+
 
 
 

@@ -300,7 +300,7 @@ export const WebFormModal: React.FC<WebFormModalProps> = ({
   return (
     <div className="space-y-6">
       {/* Top Banner Header */}
-      {!hideHeader ? (
+      {!hideHeader && (
         <div className="bg-[#111113] p-5 rounded-2xl border border-[#27272A] flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 shadow-xl">
           <div>
             <h2 className="text-xl font-serif italic text-white flex items-center gap-2">
@@ -323,16 +323,6 @@ export const WebFormModal: React.FC<WebFormModalProps> = ({
               <span>Gerar Novo Orçamento</span>
             </button>
           </div>
-        </div>
-      ) : (
-        <div className="flex flex-col sm:flex-row justify-end items-center gap-2.5">
-          <button
-            onClick={handleOpenCreateForm}
-            className="flex items-center justify-center gap-2 bg-[#D4AF37] hover:bg-[#c4a02e] text-black px-4 py-2.5 sm:py-2 rounded-xl text-xs font-bold transition-all shadow-lg cursor-pointer w-full sm:w-auto shrink-0 whitespace-nowrap"
-          >
-            <Plus size={16} />
-            <span>Gerar Novo Orçamento</span>
-          </button>
         </div>
       )}
 

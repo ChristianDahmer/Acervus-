@@ -21,6 +21,7 @@ import {
   Phone,
   Printer,
   ShieldCheck,
+  Save,
 } from 'lucide-react';
 import { printElementById } from '../utils/printUtils';
 
@@ -29,6 +30,7 @@ interface OrcamentoReservaModalProps {
   webForms?: FormularioWeb[];
   empresaConfig?: EmpresaConfig;
   onClose: () => void;
+  onUpdateWebForm?: (form: FormularioWeb) => void;
 }
 
 export const OrcamentoReservaModal: React.FC<OrcamentoReservaModalProps> = ({
@@ -36,6 +38,7 @@ export const OrcamentoReservaModal: React.FC<OrcamentoReservaModalProps> = ({
   webForms = [],
   empresaConfig,
   onClose,
+  onUpdateWebForm,
 }) => {
   const { reserva, cliente, itens, valorTotal, diasReserva } = reservaComItens;
   const [copiedLink, setCopiedLink] = useState(false);
@@ -54,6 +57,32 @@ export const OrcamentoReservaModal: React.FC<OrcamentoReservaModalProps> = ({
   });
 
   const proposalId = matchingForm?.id || `ORC-${reserva.id}`;
+  const defaultIntroText = matchingForm?.textoIntroducao || reserva.observacoes || 'Revisamos esta proposta de orçamento especialmente para você. Marque abaixo os itens do acervo que deseja incluir em seu evento, preencha os detalhes do seu contato e confirme para gerar o agendamento de forma instantânea!';
+  const [textoIntroducao, setTextoIntroducao] = useState<string>(defaultIntroText);
+  const [isTextSaved, setIsTextSaved] = useState(false);
+
+  const handleSaveTexto = () => {
+    const updatedForm: FormularioWeb = matchingForm ? {
+      ...matchingForm,
+      textoIntroducao,
+    } : {
+      id: proposalId,
+      titulo: `Orçamento para ${cliente.nome}`,
+      clienteId: cliente.id,
+      clienteNome: cliente.nome,
+      clienteTelefone: cliente.telefone,
+      itens: itens.map(i => ({ id: i.id, nome: i.nome, precoAluguel: i.precoAluguel, imageUrl: i.imageUrl || '' })),
+      criadoEm: reserva.criadoEm || Date.now(),
+      respondido: reserva.propostaAprovada || false,
+      textoIntroducao,
+    };
+
+    if (onUpdateWebForm) {
+      onUpdateWebForm(updatedForm);
+    }
+    setIsTextSaved(true);
+    setTimeout(() => setIsTextSaved(false), 2500);
+  };
   const percentualCalcao = matchingForm?.percentualCalcao ?? reserva.percentualCalcao ?? empresaConfig?.painelConfiguracao?.percentualSinalPadrao ?? 50;
   const valorCalcao = reserva.valorCalcao ?? (valorTotal * percentualCalcao) / 100;
   const saldoRestante = Math.max(0, valorTotal - valorCalcao);
@@ -236,29 +265,83 @@ export const OrcamentoReservaModal: React.FC<OrcamentoReservaModalProps> = ({
           </div>
 
           {/* Customer Response Info if available */}
-          {matchingForm?.resposta && (
+          {(matchingForm?.resposta || reserva.observacoes || reserva.endereco) && (
             <div className="bg-emerald-950/20 border border-emerald-500/30 p-4 rounded-xl space-y-2">
               <div className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
                 <CheckCircle2 size={14} /> Resposta Confirmada pelo Cliente
               </div>
               <div className="text-xs text-[#E4E4E7] space-y-1">
-                <div>
-                  <strong>Nome informado:</strong> {matchingForm.resposta.clienteNome}
-                </div>
-                <div>
-                  <strong>Telefone de contato:</strong> {matchingForm.resposta.clienteTelefone}
-                </div>
-                {matchingForm.resposta.observacoes && (
+                {matchingForm?.resposta?.clienteNome && (
                   <div>
-                    <strong>Observações:</strong> "{matchingForm.resposta.observacoes}"
+                    <strong>Nome informado:</strong> {matchingForm.resposta.clienteNome}
+                  </div>
+                )}
+                {matchingForm?.resposta?.clienteTelefone && (
+                  <div>
+                    <strong>Telefone de contato:</strong> {matchingForm.resposta.clienteTelefone}
+                  </div>
+                )}
+                {(matchingForm?.resposta?.endereco || reserva.endereco) && (
+                  <div>
+                    <strong>Local / Entrega:</strong> {matchingForm?.resposta?.endereco || reserva.endereco}
+                  </div>
+                )}
+                {((reserva as any).valorFrete > 0 || (reserva as any).distanciaKm > 0 || matchingForm?.resposta?.valorFrete > 0) && (
+                  <div>
+                    <strong>Custo de Frete:</strong> {formatarMoeda((reserva as any).valorFrete || matchingForm?.resposta?.valorFrete)} ({(reserva as any).distanciaKm || matchingForm?.resposta?.distanciaKm || 0} Km)
+                  </div>
+                )}
+                {(matchingForm?.resposta?.observacoes || reserva.observacoes) && (
+                  <div>
+                    <strong>Observações / Pedidos Especiais:</strong> "{matchingForm?.resposta?.observacoes || reserva.observacoes}"
                   </div>
                 )}
               </div>
             </div>
           )}
 
+          {/* Proposal Body Text Editor */}
+          <div className="bg-[#18181B] border border-[#27272A] p-4 rounded-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-[#D4AF37] uppercase tracking-wider flex items-center gap-2">
+                <FileText size={14} /> Texto do Corpo da Proposta e Orçamento
+              </label>
+              {isTextSaved && (
+                <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1 animate-fade-in">
+                  <CheckCircle2 size={13} /> Salvo com Sucesso!
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-[#A1A1AA]">
+              Personalize a mensagem de introdução que aparecerá no topo da proposta web e na impressão do orçamento para este cliente.
+            </p>
+            <textarea
+              rows={4}
+              value={textoIntroducao}
+              onChange={(e) => setTextoIntroducao(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-[#111113] border border-[#27272A] rounded-xl text-[14px] leading-relaxed text-white focus:border-[#D4AF37] focus:outline-none transition-all resize-y"
+              placeholder="Digite o texto introdutório da proposta..."
+            />
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={handleSaveTexto}
+                className="px-4 py-2 bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A0A0B] rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer shadow-md flex items-center gap-1.5"
+              >
+                <Save size={13} />
+                <span>Salvar Texto da Proposta</span>
+              </button>
+            </div>
+          </div>
+
           {/* Summary Box */}
           <div className="bg-gradient-to-r from-[#18181B] to-[#111113] border-2 border-[#D4AF37]/60 p-4 rounded-xl space-y-3">
+            {((reserva as any).valorFrete > 0 || matchingForm?.resposta?.valorFrete > 0) && (
+              <div className="flex items-center justify-between text-xs border-b border-[#27272A] pb-2 text-emerald-400 font-semibold font-mono">
+                <span>Custo de Frete ({(reserva as any).distanciaKm || matchingForm?.resposta?.distanciaKm || 0} Km):</span>
+                <span>{formatarMoeda((reserva as any).valorFrete || matchingForm?.resposta?.valorFrete)}</span>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <div>
                 <span className="text-[10px] uppercase font-bold tracking-widest text-[#71717A]">Valor Total do Orçamento</span>

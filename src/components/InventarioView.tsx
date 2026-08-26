@@ -1,6 +1,7 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { ItemAcervo, CategoriaItem, ListVisibilityConfig, KitComponente, Cliente } from '../types';
 import { formatarMoeda } from '../utils/whatsappTemplates';
+import { formatCurrencyBRL, parseCurrencyBRLToNumber } from '../utils/currencyMask';
 import {
   Plus,
   Search,
@@ -26,8 +27,21 @@ import {
   Copy,
   Maximize2,
   FileText,
+  Sparkles,
+  Loader2,
+  Wand2,
+  QrCode,
+  Scan,
+  Printer,
+  Smartphone,
+  Volume2,
+  RotateCcw,
+  VolumeX
 } from 'lucide-react';
+import { enhancePhotoAsync } from '../lib/aiEngine';
 import { StandardListControls, StandardPagination, StandardEmptyState } from './StandardListContainer';
+import jsQR from 'jsqr';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface InventarioViewProps {
   itens: ItemAcervo[];
@@ -108,10 +122,228 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
   const [isQuickCategoriaModalOpen, setIsQuickCategoriaModalOpen] = useState(false);
   const [newCatData, setNewCatData] = useState({ nome: '', descricao: '', cor: '#D4AF37' });
 
+  // QR Code & Android Terminal Simulation States
+  const [selectedItemForQrModal, setSelectedItemForQrModal] = useState<ItemAcervo | null>(null);
+  const [isTerminalOpen, setIsTerminalOpen] = useState(false);
+  const [scanMode, setScanMode] = useState<'CONSULTA' | 'ENTRADA' | 'SAIDA'>('CONSULTA');
+  const [terminalLogs, setTerminalLogs] = useState<Array<{ id: string; text: string; type: 'info' | 'success' | 'warning' | 'error'; timestamp: string }>>([
+    { id: '1', text: 'Coletor Android inicializado. Pronto para leitura.', type: 'info', timestamp: new Date().toLocaleTimeString('pt-BR') }
+  ]);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [simulatedScanItemId, setSimulatedScanItemId] = useState<number>(0);
+
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+
+  const playBeep = (type: 'success' | 'error' | 'info') => {
+    if (!soundEnabled) return;
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      if (type === 'success') {
+        oscillator.frequency.setValueAtTime(1200, audioCtx.currentTime);
+        oscillator.type = 'sine';
+        gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.1);
+      } else if (type === 'error') {
+        oscillator.frequency.setValueAtTime(300, audioCtx.currentTime);
+        oscillator.type = 'sawtooth';
+        gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.25);
+      } else {
+        oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
+        oscillator.type = 'triangle';
+        gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.15);
+      }
+    } catch (e) {
+      console.warn("Audio Context could not play sound", e);
+    }
+  };
+
+  const addTerminalLog = (text: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+    const timeStr = new Date().toLocaleTimeString('pt-BR');
+    setTerminalLogs(prev => [
+      {
+        id: Math.random().toString(),
+        text,
+        type,
+        timestamp: timeStr
+      },
+      ...prev
+    ]);
+  };
+
+  const startCamera = async () => {
+    setCameraError(null);
+    try {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+      
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
+      } catch (err) {
+        console.warn("FacingMode environment unavailable, falling back to default video stream", err);
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+
+      streamRef.current = stream;
+      setCameraActive(true);
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute('playsinline', 'true');
+        videoRef.current.play().catch(e => console.log("Video auto-play catch:", e));
+      }
+    } catch (err: any) {
+      console.error("Camera access error:", err);
+      setCameraActive(false);
+      setCameraError(err.message || "Não foi possível acessar a câmera do dispositivo. Verifique as permissões do navegador.");
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    setCameraActive(false);
+  };
+
+  const handleQrScanned = (data: string) => {
+    const match = data.match(/^acervus_qr_item_(\d+)$/);
+    if (!match) {
+      playBeep('error');
+      addTerminalLog(`Código QR inválido ou não reconhecido: "${data.substring(0, 30)}"`, 'error');
+      return;
+    }
+
+    const itemId = parseInt(match[1]);
+    const item = itens.find(i => i.id === itemId);
+
+    if (!item) {
+      playBeep('error');
+      addTerminalLog(`Item #${itemId} não encontrado no acervo ativo.`, 'error');
+      return;
+    }
+
+    if (scanMode === 'CONSULTA') {
+      playBeep('info');
+      addTerminalLog(`Consulta: ${item.nome} | Categoria: ${item.categoria} | Estoque: ${item.quantidadeTotal} un. | Diária: ${formatarMoeda(item.precoAluguel)}`, 'success');
+    } else if (scanMode === 'ENTRADA') {
+      const nextQty = item.quantidadeTotal + 1;
+      onEditItem({
+        ...item,
+        quantidadeTotal: nextQty
+      });
+      playBeep('success');
+      addTerminalLog(`[ENTRADA] Credenciado: ${item.nome}. Novo estoque: ${nextQty} un.`, 'success');
+    } else if (scanMode === 'SAIDA') {
+      if (item.quantidadeTotal <= 0) {
+        playBeep('error');
+        addTerminalLog(`[SAÍDA] Erro: Sem estoque disponível para baixar ${item.nome}!`, 'warning');
+      } else {
+        const nextQty = item.quantidadeTotal - 1;
+        onEditItem({
+          ...item,
+          quantidadeTotal: nextQty
+        });
+        playBeep('success');
+        addTerminalLog(`[SAÍDA] Baixado: ${item.nome}. Novo estoque: ${nextQty} un.`, 'success');
+      }
+    }
+  };
+
+  // Auto-start camera when terminal modal opens
+  useEffect(() => {
+    if (isTerminalOpen) {
+      startCamera();
+    } else {
+      stopCamera();
+    }
+    return () => {
+      stopCamera();
+    };
+  }, [isTerminalOpen]);
+
+  // Bind video stream once video element is mounted and active
+  useEffect(() => {
+    if (isTerminalOpen && cameraActive && videoRef.current && streamRef.current) {
+      if (videoRef.current.srcObject !== streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+        videoRef.current.setAttribute('playsinline', 'true');
+        videoRef.current.play().catch(e => console.log("Video play catch:", e));
+      }
+    }
+  }, [isTerminalOpen, cameraActive]);
+
+  useEffect(() => {
+    let animationFrameId: number;
+    let lastScanTime = 0;
+
+    const scanFrame = () => {
+      if (videoRef.current && canvasRef.current && cameraActive && isTerminalOpen) {
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+
+        if (ctx && video.readyState === video.HAVE_CURRENT_DATA) {
+          if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+          }
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          
+          try {
+            const code = jsQR(imageData.data, imageData.width, imageData.height, {
+              inversionAttempts: "dontInvert",
+            });
+
+            if (code) {
+              const now = Date.now();
+              if (now - lastScanTime > 2500) { // Debounce 2.5s
+                lastScanTime = now;
+                handleQrScanned(code.data);
+              }
+            }
+          } catch (err) {
+            // Decoy catch block
+          }
+        }
+      }
+      animationFrameId = requestAnimationFrame(scanFrame);
+    };
+
+    if (cameraActive && isTerminalOpen) {
+      animationFrameId = requestAnimationFrame(scanFrame);
+    }
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [cameraActive, isTerminalOpen, scanMode, itens]);
+
   // Local Device Image Selection Refs
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [permissionNotice, setPermissionNotice] = useState<string | null>(null);
+  const [isEnhancingPhoto, setIsEnhancingPhoto] = useState(false);
 
   // Helper to calculate the kit's real-time dynamic stock based on its components
   const getEffectiveStock = (item: ItemAcervo) => {
@@ -257,6 +489,35 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
     cameraInputRef.current?.click();
   };
 
+  const handleEnhanceItemPhotoInModal = async () => {
+    if (!formData.imageUrl) {
+      setPermissionNotice('Selecione ou tire uma foto antes de solicitar o realce.');
+      return;
+    }
+    setIsEnhancingPhoto(true);
+    setPermissionNotice('Processando realce em estúdio com IA...');
+
+    try {
+      const res = await enhancePhotoAsync({
+        imageBase64: formData.imageUrl,
+        mode: 'studio',
+        itemNome: formData.nome || 'Item Acervo',
+        descritivoItem: formData.descricao || undefined,
+        aspectRatio: '1:1'
+      });
+
+      if (res.enhancedImageUrl) {
+        setFormData((prev) => ({ ...prev, imageUrl: res.enhancedImageUrl }));
+        setPermissionNotice(`✨ Foto realçada com sucesso via IA! (Score: ${res.audit?.scoreQualidade || 95}/100)`);
+        setTimeout(() => setPermissionNotice(null), 5000);
+      }
+    } catch (err: any) {
+      setPermissionNotice(err.message || 'Não foi possível realçar a foto.');
+    } finally {
+      setIsEnhancingPhoto(false);
+    }
+  };
+
   const handleSubmitModal = (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -382,6 +643,17 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
           >
             <Plus size={16} />
             <span>Adicionar Item</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setIsTerminalOpen(true);
+              setCameraActive(true);
+            }}
+            className="flex items-center justify-center gap-2 bg-[#18181B] hover:bg-[#27272A] text-[#A1A1AA] hover:text-white px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider border border-[#27272A] hover:border-[#D4AF37] transition-all cursor-pointer w-full sm:w-auto shrink-0"
+          >
+            <QrCode size={16} className="text-[#D4AF37]" />
+            <span>Coletor QR Code</span>
           </button>
         </div>
       </div>
@@ -671,6 +943,17 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
+                              setSelectedItemForQrModal(item);
+                            }}
+                            className="flex items-center gap-1 text-xs text-[#A1A1AA] hover:text-[#D4AF37] transition-colors p-1 cursor-pointer"
+                            title="Gerar QR Code / Etiqueta Imprimível"
+                          >
+                            <QrCode size={13} /> <span>Etiqueta</span>
+                          </button>
+
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
                               onDeleteItem(item.id);
                             }}
                             className="flex items-center gap-1 text-xs text-[#A1A1AA] hover:text-rose-400 transition-colors p-1 cursor-pointer"
@@ -847,6 +1130,16 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
+                                setSelectedItemForQrModal(item);
+                              }}
+                              className="p-1.5 text-[#A1A1AA] hover:text-[#D4AF37] hover:bg-[#18181B] border border-transparent hover:border-[#27272A] rounded-lg transition-colors cursor-pointer"
+                              title="Gerar QR Code / Etiqueta Imprimível"
+                            >
+                              <QrCode size={14} />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 onDeleteItem(item.id);
                               }}
                               className="p-1.5 text-[#A1A1AA] hover:text-rose-400 hover:bg-[#18181B] border border-transparent hover:border-[#27272A] rounded-lg transition-colors cursor-pointer"
@@ -954,15 +1247,13 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                   <div>
                     <label className="block text-xs font-medium text-[#A1A1AA] mb-1">Preço Aluguel (R$/dia)</label>
                     <input
-                      type="number"
-                      min="0"
-                      step="0.5"
+                      type="text"
                       required
-                      placeholder="0,00"
-                      value={formData.precoAluguel === 0 ? '' : formData.precoAluguel}
-                      onChange={(e) => setFormData({ ...formData, precoAluguel: parseFloat(e.target.value) || 0 })}
+                      placeholder="R$ 0,00"
+                      value={formatCurrencyBRL(formData.precoAluguel)}
+                      onChange={(e) => setFormData({ ...formData, precoAluguel: parseCurrencyBRLToNumber(e.target.value) })}
                       onFocus={handleFocusScroll}
-                      className="w-full px-3 py-2 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none"
+                      className="w-full px-3 py-2 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none font-mono"
                     />
                   </div>
                 </div>
@@ -1186,23 +1477,45 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                   </button>
                 </div>
 
-                {/* Clean Photo Preview */}
+                {/* Clean Photo Preview with AI Realce Button */}
                 {formData.imageUrl && (
-                  <div className="bg-[#111113] border border-[#27272A] p-3 rounded-xl flex items-center gap-3">
-                    <img
-                      src={formData.imageUrl}
-                      alt="Preview"
-                      className="w-16 h-16 object-cover rounded-lg border border-[#27272A] shrink-0"
-                    />
-                    <div className="flex-1 min-w-0 space-y-1">
-                      <p className="text-xs text-[#E4E4E7] font-semibold flex items-center gap-1.5">
-                        <CheckCircle2 size={14} className="text-emerald-400" />
-                        Imagem selecionada
-                      </p>
-                      <p className="text-[11px] text-[#A1A1AA]">
-                        A foto foi vinculada a este item do acervo.
-                      </p>
+                  <div className="bg-[#111113] border border-[#27272A] p-3 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={formData.imageUrl}
+                        alt="Preview"
+                        className="w-16 h-16 object-cover rounded-lg border border-[#27272A] shrink-0"
+                      />
+                      <div className="flex-1 min-w-0 space-y-1">
+                        <p className="text-xs text-[#E4E4E7] font-semibold flex items-center gap-1.5">
+                          <CheckCircle2 size={14} className="text-emerald-400" />
+                          Imagem Vinculada
+                        </p>
+                        <p className="text-[11px] text-[#A1A1AA]">
+                          Foto do item pronta para catálogo.
+                        </p>
+                      </div>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={handleEnhanceItemPhotoInModal}
+                      disabled={isEnhancingPhoto}
+                      className="w-full sm:w-auto px-3 py-2 bg-gradient-to-r from-[#D4AF37]/20 to-amber-500/20 hover:from-[#D4AF37]/30 hover:to-amber-500/30 border border-[#D4AF37]/50 text-[#D4AF37] rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                      title="Realçar com IA (Qualidade Estúdio Comercial)"
+                    >
+                      {isEnhancingPhoto ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin text-[#D4AF37]" />
+                          <span>Realçando...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles size={14} className="text-[#D4AF37]" />
+                          <span>Realçar com IA (Estúdio)</span>
+                        </>
+                      )}
+                    </button>
                   </div>
                 )}
               </div>
@@ -1521,6 +1834,381 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
               </div>
 
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE IMPRESSÃO DE ETIQUETA QR CODE */}
+      {selectedItemForQrModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-[#18181B] border border-[#27272A] rounded-2xl max-w-md w-full overflow-hidden shadow-2xl flex flex-col">
+            
+            {/* Header */}
+            <div className="p-5 border-b border-[#27272A] flex justify-between items-center">
+              <div className="flex items-center gap-2 text-[#D4AF37]">
+                <QrCode size={18} />
+                <h3 className="font-serif italic font-bold text-white text-base">Gerador de Etiqueta QR</h3>
+              </div>
+              <button
+                onClick={() => setSelectedItemForQrModal(null)}
+                className="text-[#71717A] hover:text-white transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body with Printable Ticket Simulation */}
+            <div className="p-6 bg-[#111113] flex flex-col items-center justify-center space-y-6">
+              
+              <p className="text-xs text-[#A1A1AA] text-center max-w-[280px]">
+                Esta etiqueta pode ser impressa em qualquer impressora térmica adesiva (Brother, Zebra, Elgin) de 50mm ou comum.
+              </p>
+
+              {/* Physical Sticker Simulation */}
+              <div 
+                id="printable-sticker-area"
+                className="bg-white text-black p-5 rounded-lg border-2 border-dashed border-gray-400 w-64 h-64 flex flex-col items-center justify-between shadow-lg text-center"
+              >
+                <div className="w-full">
+                  <h4 className="text-xs font-black tracking-wide uppercase truncate leading-tight">
+                    {selectedItemForQrModal.nome}
+                  </h4>
+                  <p className="text-[9px] text-gray-500 font-mono mt-0.5 truncate">
+                    {selectedItemForQrModal.categoria}
+                  </p>
+                </div>
+
+                {/* QR Code Wrapper */}
+                <div className="p-2 bg-white rounded border border-gray-100 flex items-center justify-center">
+                  <QRCodeSVG 
+                    id="printable-qr-svg"
+                    value={`acervus_qr_item_${selectedItemForQrModal.id}`}
+                    size={110}
+                    level="H"
+                    includeMargin={false}
+                  />
+                </div>
+
+                <div className="w-full text-[9px] font-mono leading-none">
+                  <p className="font-bold">ID: #{selectedItemForQrModal.id}</p>
+                  <p className="font-bold text-[10px] mt-1 text-gray-800">
+                    {formatarMoeda(selectedItemForQrModal.precoAluguel)} / diária
+                  </p>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Actions */}
+            <div className="p-5 border-t border-[#27272A] bg-[#18181B] grid grid-cols-2 gap-3">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(`acervus_qr_item_${selectedItemForQrModal.id}`);
+                  playBeep('success');
+                  alert("Código de identificação da peça copiado com sucesso para a área de transferência!");
+                }}
+                className="py-2.5 bg-[#27272A] hover:bg-[#3F3F46] text-white text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Copy size={13} />
+                <span>Copiar Código</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  const printWindow = window.open('', '_blank');
+                  if (printWindow) {
+                    printWindow.document.write(`
+                      <html>
+                        <head>
+                          <title>Imprimir Etiqueta - ${selectedItemForQrModal?.nome}</title>
+                          <style>
+                            @page { size: 60mm 60mm; margin: 0; }
+                            body {
+                              margin: 0;
+                              padding: 15px;
+                              font-family: 'Courier New', Courier, monospace;
+                              display: flex;
+                              flex-direction: column;
+                              align-items: center;
+                              justify-content: center;
+                              text-align: center;
+                              background: white;
+                              color: black;
+                            }
+                            .sticker {
+                              width: 50mm;
+                              height: 50mm;
+                              border: 1px dashed #000;
+                              padding: 10px;
+                              box-sizing: border-box;
+                              display: flex;
+                              flex-direction: column;
+                              align-items: center;
+                              justify-content: space-between;
+                            }
+                            .title {
+                              font-size: 11px;
+                              font-weight: bold;
+                              text-transform: uppercase;
+                              margin-bottom: 5px;
+                              max-width: 100%;
+                              overflow: hidden;
+                              text-overflow: ellipsis;
+                              white-space: nowrap;
+                            }
+                            .meta {
+                              font-size: 8px;
+                              margin-top: 5px;
+                            }
+                            .price {
+                              font-size: 10px;
+                              font-weight: bold;
+                              margin-top: 2px;
+                            }
+                          </style>
+                        </head>
+                        <body>
+                          <div class="sticker">
+                            <div class="title">${selectedItemForQrModal?.nome}</div>
+                            <div id="qr-container"></div>
+                            <div class="meta">
+                              ID: #${selectedItemForQrModal?.id} | ${selectedItemForQrModal?.categoria}
+                              <div class="price">${formatarMoeda(selectedItemForQrModal?.precoAluguel || 0)} / diária</div>
+                            </div>
+                          </div>
+                          <script>
+                            const parentSvg = window.opener.document.getElementById('printable-qr-svg');
+                            if (parentSvg) {
+                              document.getElementById('qr-container').innerHTML = parentSvg.outerHTML;
+                              const svg = document.getElementById('qr-container').querySelector('svg');
+                              if (svg) {
+                                svg.setAttribute('width', '110');
+                                svg.setAttribute('height', '110');
+                              }
+                            }
+                            setTimeout(() => {
+                              window.print();
+                              window.close();
+                            }, 500);
+                          </script>
+                        </body>
+                      </html>
+                    `);
+                    printWindow.document.close();
+                  } else {
+                    window.print();
+                  }
+                }}
+                className="py-2.5 bg-[#D4AF37] hover:bg-[#E5C158] text-black text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-lg shadow-[#D4AF37]/10"
+              >
+                <Printer size={13} />
+                <span>Imprimir QR</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* MODAL COLETOR DE DADOS E LEITOR QR CODE */}
+      {isTerminalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fadeIn">
+          <div className="bg-[#141416] border border-[#27272A] rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            
+            {/* Header */}
+            <div className="p-5 border-b border-[#27272A] bg-[#18181B] flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-[#141416] border border-[#27272A] rounded-xl text-[#D4AF37]">
+                  <QrCode size={20} />
+                </div>
+                <div>
+                  <h3 className="font-serif italic font-bold text-white text-base">Coletor & Leitor QR Code</h3>
+                  <p className="text-[11px] text-[#A1A1AA]">Escaneamento, consulta e movimentação rápida de acervo</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => setSoundEnabled(!soundEnabled)} 
+                  className="p-2 bg-[#27272A] hover:bg-[#3F3F46] text-[#A1A1AA] hover:text-white rounded-xl transition-colors cursor-pointer"
+                  title={soundEnabled ? "Desativar Bip Sonoro" : "Ativar Bip Sonoro"}
+                >
+                  {soundEnabled ? <Volume2 size={16} className="text-emerald-400" /> : <VolumeX size={16} className="text-rose-500" />}
+                </button>
+                <button
+                  onClick={() => {
+                    stopCamera();
+                    setIsTerminalOpen(false);
+                  }}
+                  className="p-2 text-[#71717A] hover:text-white transition-colors cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4 overflow-y-auto custom-scrollbar flex-1">
+              
+              {/* Mode Selectors */}
+              <div className="grid grid-cols-3 gap-2 bg-[#111113] p-1.5 rounded-xl border border-[#27272A]">
+                {(['CONSULTA', 'ENTRADA', 'SAIDA'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => {
+                      setScanMode(mode);
+                      playBeep('info');
+                    }}
+                    className={`py-2 px-2 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      scanMode === mode
+                        ? 'bg-[#D4AF37] text-black shadow-md'
+                        : 'text-[#A1A1AA] hover:text-white hover:bg-[#18181B]'
+                    }`}
+                  >
+                    {mode === 'CONSULTA' ? 'Consulta' : mode === 'ENTRADA' ? 'Check-In' : 'Check-Out'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Camera Scanner Container */}
+              <div className="relative aspect-video rounded-xl overflow-hidden border border-[#27272A] bg-[#0A0A0B] flex flex-col items-center justify-center">
+                <video
+                  ref={videoRef}
+                  className={cameraActive ? "w-full h-full object-cover" : "hidden"}
+                  playsInline
+                  autoPlay
+                  muted
+                />
+                <canvas ref={canvasRef} className="hidden" />
+
+                {cameraActive ? (
+                  <>
+                    {/* Laser Overlay Line */}
+                    <div className="absolute inset-x-0 h-0.5 bg-red-500 shadow-[0_0_8px_#ef4444] top-1/2 -translate-y-1/2 animate-bounce pointer-events-none" />
+                    
+                    {/* Target grid overlay */}
+                    <div className="absolute inset-10 border border-white/20 pointer-events-none rounded-lg flex items-center justify-center">
+                      <div className="w-1/3 h-1/3 border-2 border-emerald-400 border-dashed animate-pulse rounded" />
+                    </div>
+
+                    <button
+                      onClick={stopCamera}
+                      className="absolute bottom-3 right-3 bg-black/70 hover:bg-black text-white text-xs font-semibold px-3 py-1.5 rounded-lg border border-white/10 cursor-pointer backdrop-blur-md"
+                    >
+                      Pausar Câmera
+                    </button>
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center justify-center p-6 text-center space-y-2">
+                    <Scan className="text-[#D4AF37] animate-pulse" size={32} />
+                    <div>
+                      <p className="text-xs text-[#E4E4E7] font-semibold">Câmera desativada ou aguardando autorização</p>
+                      <p className="text-[11px] text-[#71717A] mt-0.5">Aponte a câmera do smartphone ou webcam para o QR Code do item</p>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
+                      <button
+                        onClick={startCamera}
+                        className="px-4 py-1.5 bg-[#D4AF37] hover:bg-[#E5C158] text-black text-xs font-bold rounded-lg cursor-pointer transition-all shadow-md"
+                      >
+                        Ativar Câmera
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {cameraError && (
+                  <div className="absolute inset-0 bg-red-950/90 flex flex-col items-center justify-center p-4 text-center space-y-2">
+                    <p className="text-xs text-red-200 font-medium">{cameraError}</p>
+                    <button
+                      onClick={startCamera}
+                      className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white text-xs font-bold rounded-lg cursor-pointer transition-colors"
+                    >
+                      Tentar Novamente
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* SIMULATOR / MANUAL TEST BAR */}
+              <div className="bg-[#111113] p-3.5 rounded-xl border border-[#27272A] space-y-2">
+                <span className="text-[10px] uppercase tracking-wider text-[#71717A] font-bold font-mono block">Leitura Manual / Teste sem Câmera</span>
+                <div className="flex gap-2">
+                  <select
+                    value={simulatedScanItemId}
+                    onChange={(e) => setSimulatedScanItemId(parseInt(e.target.value))}
+                    className="flex-1 text-xs bg-[#0A0A0B] border border-[#27272A] rounded-lg px-3 py-2 text-white focus:border-[#D4AF37] focus:outline-none"
+                  >
+                    <option value={0}>Selecione uma peça do acervo...</option>
+                    {itens.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.nome} (Estoque: {item.quantidadeTotal})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => {
+                      if (simulatedScanItemId > 0) {
+                        handleQrScanned(`acervus_qr_item_${simulatedScanItemId}`);
+                      } else {
+                        playBeep('error');
+                        addTerminalLog("Selecione um item para simular a leitura física.", "warning");
+                      }
+                    }}
+                    className="bg-[#D4AF37] text-black hover:bg-[#E5C158] px-4 rounded-lg text-xs font-bold cursor-pointer flex items-center gap-1.5 shrink-0 transition-all shadow-md"
+                  >
+                    <QrCode size={14} /> Bipar
+                  </button>
+                </div>
+              </div>
+
+              {/* Logs / History */}
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] uppercase tracking-wider text-[#71717A] font-bold font-mono">Histórico de Leituras</span>
+                  <button
+                    onClick={() => {
+                      setTerminalLogs([{ id: Date.now().toString(), text: 'Histórico limpo.', type: 'info', timestamp: new Date().toLocaleTimeString('pt-BR') }]);
+                      playBeep('info');
+                    }}
+                    className="text-[10px] text-[#71717A] hover:text-[#D4AF37] flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    <RotateCcw size={11} /> Limpar
+                  </button>
+                </div>
+                
+                <div className="bg-[#111113] border border-[#27272A] rounded-xl p-3 overflow-y-auto text-xs font-mono space-y-2 h-36 custom-scrollbar">
+                  {terminalLogs.map((log) => (
+                    <div key={log.id} className="flex items-start gap-2 leading-tight border-b border-[#18181B] pb-1.5 last:border-0 last:pb-0">
+                      <span className="text-[#71717A] shrink-0 text-[10px]">{log.timestamp}</span>
+                      <span className={`shrink-0 font-bold px-1.5 py-0.5 rounded text-[9px] ${
+                        log.type === 'success' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
+                        log.type === 'error' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' :
+                        log.type === 'warning' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                        'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                      }`}>
+                        {log.type.toUpperCase()}
+                      </span>
+                      <span className="text-[#E4E4E7] break-words">{log.text}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-[#27272A] bg-[#18181B] flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  stopCamera();
+                  setIsTerminalOpen(false);
+                }}
+                className="px-5 py-2.5 bg-[#27272A] hover:bg-[#3F3F46] text-white text-xs font-semibold rounded-xl transition-all cursor-pointer"
+              >
+                Fechar Coletor
+              </button>
+            </div>
+
           </div>
         </div>
       )}

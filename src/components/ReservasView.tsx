@@ -14,15 +14,17 @@ import {
   Play,
   Eye,
   EyeOff,
+  LayoutGrid,
+  List,
+  Sparkles,
+  Receipt,
+  MapPin,
   ChevronLeft,
   ChevronRight,
   RotateCcw,
   Filter,
   CalendarDays,
-  LayoutGrid,
-  List,
-  Sparkles,
-  Receipt,
+  X,
 } from 'lucide-react';
 import { StandardListControls, StandardPagination, StandardEmptyState } from './StandardListContainer';
 
@@ -37,6 +39,7 @@ interface ReservasViewProps {
   onOpenWhatsApp: (reservaComItens: ReservaComItens) => void;
   listVisibility?: ListVisibilityConfig;
   onUpdateNfse?: (reservaId: number, chaveAcesso: string, protocolo: string, dataEmissao: number) => Promise<void>;
+  onUpdateWebForm?: (form: FormularioWeb) => void;
 }
 
 type ModoCalendario = 'SEMANAL' | 'QUINZENAL' | 'MENSAL';
@@ -58,6 +61,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
   onOpenWhatsApp,
   listVisibility,
   onUpdateNfse,
+  onUpdateWebForm,
 }) => {
   const [selectedOrcamentoReserva, setSelectedOrcamentoReserva] = useState<ReservaComItens | null>(null);
   const [selectedNfseReserva, setSelectedNfseReserva] = useState<ReservaComItens | null>(null);
@@ -75,9 +79,53 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
   }, [listVisibility]);
 
   const [filterStatus, setFilterStatus] = useState<string>('TODOS');
+  const [showOnlyFuture, setShowOnlyFuture] = useState(false);
   const [modoCalendario, setModoCalendario] = useState<ModoCalendario>('SEMANAL');
   const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
-  const [selectedDateFilter, setSelectedDateFilter] = useState<string | null>(null); // 'YYYY-MM-DD'
+  const [selectedDates, setSelectedDates] = useState<string[]>([]);
+  const [selectionMode, setSelectionMode] = useState<'INDIVIDUAL' | 'INTERVALO'>('INDIVIDUAL');
+  const [rangeStart, setRangeStart] = useState<string | null>(null);
+  const [rangeEnd, setRangeEnd] = useState<string | null>(null);
+
+  // Floating Drawer / Card Flutuante state
+  const [isCalendarOpen, setIsCalendarOpen] = useState(true);
+  const [isCalendarMinimized, setIsCalendarMinimized] = useState(false);
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = React.useRef<{ x: number; y: number; initialX: number; initialY: number } | null>(null);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('.no-drag')) return;
+    setIsDragging(true);
+    const currentX = dragPos?.x || 0;
+    const currentY = dragPos?.y || 0;
+    dragStartRef.current = { x: e.clientX, y: e.clientY, initialX: currentX, initialY: currentY };
+  };
+
+  React.useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging || !dragStartRef.current) return;
+      const dx = e.clientX - dragStartRef.current.x;
+      const dy = e.clientY - dragStartRef.current.y;
+      setDragPos({
+        x: dragStartRef.current.initialX + dx,
+        y: dragStartRef.current.initialY + dy,
+      });
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
 
   // Helper date functions
   const isToday = (d: Date) => {
@@ -202,11 +250,50 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
     setAnchorDate(new Date());
   };
 
+  const getDatesInRange = (startKey: string, endKey: string): string[] => {
+    const [startYear, startMonth, startDay] = startKey.split('-').map(Number);
+    const [endYear, endMonth, endDay] = endKey.split('-').map(Number);
+    
+    const startDate = new Date(startYear, startMonth - 1, startDay, 12, 0, 0);
+    const endDate = new Date(endYear, endMonth - 1, endDay, 12, 0, 0);
+    
+    const dates: string[] = [];
+    const current = new Date(startDate);
+    
+    while (current <= endDate) {
+      const yyyy = current.getFullYear();
+      const mm = String(current.getMonth() + 1).padStart(2, '0');
+      const dd = String(current.getDate()).padStart(2, '0');
+      dates.push(`${yyyy}-${mm}-${dd}`);
+      current.setDate(current.getDate() + 1);
+    }
+    
+    return dates;
+  };
+
   const handleSelectDate = (dateKey: string) => {
-    if (selectedDateFilter === dateKey) {
-      setSelectedDateFilter(null);
+    if (selectionMode === 'INDIVIDUAL') {
+      if (selectedDates.includes(dateKey)) {
+        setSelectedDates(selectedDates.filter((d) => d !== dateKey));
+      } else {
+        setSelectedDates([...selectedDates, dateKey]);
+      }
     } else {
-      setSelectedDateFilter(dateKey);
+      // INTERVALO selection mode
+      if (!rangeStart || (rangeStart && rangeEnd)) {
+        setRangeStart(dateKey);
+        setRangeEnd(null);
+        setSelectedDates([dateKey]);
+      } else {
+        if (dateKey < rangeStart) {
+          setRangeStart(dateKey);
+          setSelectedDates([dateKey]);
+        } else {
+          setRangeEnd(dateKey);
+          const range = getDatesInRange(rangeStart, dateKey);
+          setSelectedDates(range);
+        }
+      }
     }
   };
 
@@ -217,15 +304,23 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
   // Filter reservations based on status tab AND calendar date selection AND search - Memoized for Performance
   const filteredReservas = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfTodayTime = startOfToday.getTime();
+
     return reservas.filter((r) => {
       if (filterStatus !== 'TODOS' && r.reserva.status !== filterStatus) return false;
 
-      if (selectedDateFilter) {
-        const [yr, mo, da] = selectedDateFilter.split('-').map(Number);
-        const dStart = new Date(yr, mo - 1, da, 0, 0, 0).getTime();
-        const dEnd = new Date(yr, mo - 1, da, 23, 59, 59, 999).getTime();
-        const overlaps = r.reserva.dataRetirada <= dEnd && r.reserva.dataDevolucao >= dStart;
-        if (!overlaps) return false;
+      if (showOnlyFuture && r.reserva.dataDevolucao < startOfTodayTime) return false;
+
+      if (selectedDates.length > 0) {
+        const overlapsAny = selectedDates.some((dateStr) => {
+          const [yr, mo, da] = dateStr.split('-').map(Number);
+          const dStart = new Date(yr, mo - 1, da, 0, 0, 0).getTime();
+          const dEnd = new Date(yr, mo - 1, da, 23, 59, 59, 999).getTime();
+          return r.reserva.dataRetirada <= dEnd && r.reserva.dataDevolucao >= dStart;
+        });
+        if (!overlapsAny) return false;
       }
 
       if (term) {
@@ -237,7 +332,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
 
       return true;
     });
-  }, [reservas, filterStatus, selectedDateFilter, searchTerm]);
+  }, [reservas, filterStatus, selectedDates, searchTerm, showOnlyFuture]);
 
   const paginatedReservas = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
@@ -312,11 +407,11 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
               {isListVisible ? <EyeOff size={14} /> : <Eye size={14} />}
             </button>
           </h2>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-1.5">
-            <p className="text-[#A1A1AA] text-xs">Acompanhe retiradas, devoluções e contratos em aberto</p>
+          <p className="text-[#A1A1AA] text-xs mt-1.5">Acompanhe retiradas, devoluções e contratos em aberto</p>
+          <div className="flex items-center gap-2 mt-3">
             <button
               onClick={onOpenNovaReserva}
-              className="inline-flex items-center justify-center gap-1.5 bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A0A0B] px-3 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wider shadow-md shadow-[#D4AF37]/5 transition-all cursor-pointer whitespace-nowrap shrink-0"
+              className="inline-flex items-center justify-center gap-1.5 bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A0A0B] px-3 h-[36px] rounded-lg text-[11px] font-bold uppercase tracking-wider shadow-md shadow-[#D4AF37]/5 transition-all cursor-pointer whitespace-nowrap shrink-0"
             >
               <Plus size={13} />
               <span>Criar Reserva</span>
@@ -378,211 +473,354 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
         </div>
       </div>
 
-      {/* Mini Calendário Configurável de Ocupação */}
-      <div className="bg-[#111113] border border-[#27272A] rounded-2xl p-4 sm:p-5 shadow-xl space-y-4">
-        {/* Calendar Header Controls */}
-        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 border-b border-[#27272A] pb-4">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-[#18181B] border border-[#D4AF37]/30 rounded-xl text-[#D4AF37]">
+      {/* Banner de Filtro por Data Ativo (Inline sobre a tabela) */}
+      {selectedDates.length > 0 && (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 bg-[#18181B] border border-[#D4AF37]/50 p-3.5 rounded-2xl text-xs shadow-lg animate-fade-in">
+          <div className="flex items-center space-x-2 text-white">
+            <Filter size={15} className="text-[#D4AF37] shrink-0" />
+            <span>
+              {selectedDates.length === 1 ? (
+                <>
+                  Filtrando reservas ativas para a data:{' '}
+                  <strong className="text-[#D4AF37] font-mono font-bold">
+                    {selectedDates[0].split('-').reverse().join('/')}
+                  </strong>
+                </>
+              ) : (
+                <>
+                  Filtrando reservas ativas para{' '}
+                  <strong className="text-[#D4AF37] font-bold">
+                    {selectedDates.length} datas selecionadas
+                  </strong>{' '}
+                  {rangeStart && rangeEnd && (
+                    <span className="text-[#A1A1AA] font-mono text-[10px] bg-[#111113] px-2 py-0.5 rounded border border-[#27272A] ml-1.5">
+                      (de {rangeStart.split('-').reverse().join('/')} até {rangeEnd.split('-').reverse().join('/')})
+                    </span>
+                  )}
+                </>
+              )}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedDates([]);
+                setRangeStart(null);
+                setRangeEnd(null);
+              }}
+              className="flex items-center space-x-1 text-[#A1A1AA] hover:text-white bg-[#27272A] hover:bg-[#3F3F46] px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0"
+            >
+              <XCircle size={13} />
+              <span>Limpar Filtro</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 🪟 BARRA DE SELEÇÃO DE CALENDÁRIO + CARD FLUTUANTE SUSPENSO ABAIXO */}
+      <div className="relative bg-[#111113] border border-[#27272A] rounded-2xl p-3.5 sm:p-4 shadow-xl">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center space-x-2.5">
+            <div className="p-1.5 bg-[#18181B] border border-[#D4AF37]/30 rounded-xl text-[#D4AF37]">
               <CalendarDays size={18} />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                <span>Ocupação do Acervo</span>
-                <span className="text-xs font-mono font-normal text-[#D4AF37] bg-[#18181B] px-2 py-0.5 rounded border border-[#27272A]">
-                  {getHeaderPeriodText()}
-                </span>
+              <h3 className="text-xs sm:text-sm font-semibold text-white flex items-center gap-2">
+                <span>Calendário de Reservas</span>
+                {isCalendarOpen && (
+                  <span className="text-[10px] font-mono text-[#D4AF37] bg-[#18181B] px-2 py-0.5 rounded border border-[#27272A]">
+                    {getHeaderPeriodText()}
+                  </span>
+                )}
               </h3>
-              <p className="text-[11px] text-[#71717A]">
-                Selecione um dia para filtrar pedidos ativos e verificar datas livres
+              <p className="text-[10px] text-[#71717A]">
+                Clique em Semanal, Quinzenal ou Mensal para abrir o calendário flutuante suspenso abaixo
               </p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto justify-between lg:justify-end">
-            {/* View Mode Toggle Switch - Clean Labels separated by vertical bar */}
-            <div className="flex items-center px-3 py-1.5 bg-[#18181B] border border-[#27272A] rounded-xl text-xs font-medium text-[#71717A] gap-2 shadow-inner">
+          {/* Inline Mode Selector Buttons (Semanal | Quinzenal | Mensal) */}
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+            <div className="flex items-center p-1 bg-[#18181B] border border-[#27272A] rounded-xl text-xs font-medium text-[#71717A] gap-1 shadow-inner">
               <button
                 type="button"
-                onClick={() => setModoCalendario('SEMANAL')}
-                className={`transition-colors cursor-pointer ${
-                  modoCalendario === 'SEMANAL'
-                    ? 'text-[#D4AF37] font-bold'
-                    : 'hover:text-white'
+                onClick={() => {
+                  if (isCalendarOpen && modoCalendario === 'SEMANAL') {
+                    setIsCalendarOpen(false);
+                  } else {
+                    setModoCalendario('SEMANAL');
+                    setIsCalendarOpen(true);
+                    setIsCalendarMinimized(false);
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-semibold ${
+                  isCalendarOpen && modoCalendario === 'SEMANAL'
+                    ? 'bg-[#D4AF37] text-[#0A0A0B] shadow-md shadow-[#D4AF37]/10'
+                    : 'hover:text-white hover:bg-[#27272A]'
                 }`}
               >
                 Semanal
               </button>
-              <span className="text-[#3F3F46] font-light">|</span>
               <button
                 type="button"
-                onClick={() => setModoCalendario('QUINZENAL')}
-                className={`transition-colors cursor-pointer ${
-                  modoCalendario === 'QUINZENAL'
-                    ? 'text-[#D4AF37] font-bold'
-                    : 'hover:text-white'
+                onClick={() => {
+                  if (isCalendarOpen && modoCalendario === 'QUINZENAL') {
+                    setIsCalendarOpen(false);
+                  } else {
+                    setModoCalendario('QUINZENAL');
+                    setIsCalendarOpen(true);
+                    setIsCalendarMinimized(false);
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-semibold ${
+                  isCalendarOpen && modoCalendario === 'QUINZENAL'
+                    ? 'bg-[#D4AF37] text-[#0A0A0B] shadow-md shadow-[#D4AF37]/10'
+                    : 'hover:text-white hover:bg-[#27272A]'
                 }`}
               >
                 Quinzenal
               </button>
-              <span className="text-[#3F3F46] font-light">|</span>
               <button
                 type="button"
-                onClick={() => setModoCalendario('MENSAL')}
-                className={`transition-colors cursor-pointer ${
-                  modoCalendario === 'MENSAL'
-                    ? 'text-[#D4AF37] font-bold'
-                    : 'hover:text-white'
+                onClick={() => {
+                  if (isCalendarOpen && modoCalendario === 'MENSAL') {
+                    setIsCalendarOpen(false);
+                  } else {
+                    setModoCalendario('MENSAL');
+                    setIsCalendarOpen(true);
+                    setIsCalendarMinimized(false);
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-semibold ${
+                  isCalendarOpen && modoCalendario === 'MENSAL'
+                    ? 'bg-[#D4AF37] text-[#0A0A0B] shadow-md shadow-[#D4AF37]/10'
+                    : 'hover:text-white hover:bg-[#27272A]'
                 }`}
               >
                 Mensal
               </button>
-            </div>
-
-            {/* Navigation Arrows */}
-            <div className="flex items-center space-x-1">
               <button
                 type="button"
-                onClick={handlePrev}
-                className="p-1.5 bg-[#18181B] hover:bg-[#27272A] text-[#A1A1AA] hover:text-white border border-[#27272A] rounded-xl transition-all cursor-pointer"
-                title="Período Anterior"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <button
-                type="button"
-                onClick={handleToday}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#18181B] hover:bg-[#27272A] text-xs font-semibold text-[#D4AF37] border border-[#27272A] rounded-xl transition-all cursor-pointer"
-              >
-                <RotateCcw size={12} />
-                <span>Hoje</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleNext}
-                className="p-1.5 bg-[#18181B] hover:bg-[#27272A] text-[#A1A1AA] hover:text-white border border-[#27272A] rounded-xl transition-all cursor-pointer"
-                title="Próximo Período"
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Calendar Grid Body */}
-        {modoCalendario === 'MENSAL' && (
-          <div className="grid grid-cols-7 gap-1 sm:gap-2 mb-1">
-            {DIAS_SEMANA.map((d) => (
-              <div
-                key={d}
-                className="text-center text-[10px] font-bold uppercase tracking-wider text-[#71717A] py-1"
-              >
-                {d}
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div
-          className={
-            modoCalendario === 'SEMANAL'
-              ? 'grid grid-cols-7 gap-1.5 sm:gap-2'
-              : modoCalendario === 'QUINZENAL'
-              ? 'grid grid-cols-5 sm:grid-cols-8 md:grid-cols-15 gap-1.5 overflow-x-auto pb-1 no-scrollbar'
-              : 'grid grid-cols-7 gap-1 sm:gap-1.5'
-          }
-        >
-          {calendarDays.map(({ date, dateKey, isCurrentMonth }) => {
-            const dayReservas = getReservasForDate(date);
-            const hasReservas = dayReservas.length > 0;
-            const isSelected = selectedDateFilter === dateKey;
-            const isDayToday = isToday(date);
-            const dayNum = date.getDate();
-            const weekDayName = DIAS_SEMANA[(date.getDay() + 6) % 7]; // Mon=0 .. Sun=6
-
-            return (
-              <button
-                type="button"
-                key={dateKey}
-                onClick={() => handleSelectDate(dateKey)}
-                className={`group relative flex flex-col items-center justify-center p-1.5 sm:p-2 rounded-xl border text-center transition-all cursor-pointer select-none min-h-[58px] ${
-                  isSelected
-                    ? 'bg-[#18181B] border-[#D4AF37] ring-2 ring-[#D4AF37]/30 shadow-md shadow-[#D4AF37]/10'
-                    : isDayToday
-                    ? 'bg-[#18181B] border-[#D4AF37]/70 shadow-sm'
-                    : !isCurrentMonth
-                    ? 'bg-[#0A0A0B]/40 border-[#27272A]/30 opacity-35 hover:opacity-100'
-                    : 'bg-[#0A0A0B] border-[#27272A] hover:border-[#3F3F46] hover:bg-[#18181B]/60'
+                onClick={() => {
+                  setShowOnlyFuture(!showOnlyFuture);
+                  setCurrentPage(1);
+                  setIsCalendarOpen(false);
+                }}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer font-semibold ${
+                  showOnlyFuture
+                    ? 'bg-[#D4AF37] text-[#0A0A0B] shadow-md shadow-[#D4AF37]/10'
+                    : 'hover:text-white hover:bg-[#27272A]'
                 }`}
               >
-                {/* Weekday label if applicable */}
-                {modoCalendario !== 'MENSAL' && (
-                  <span
-                    className={`text-[9px] font-bold uppercase tracking-wider leading-none mb-0.5 ${
-                      isSelected || isDayToday ? 'text-[#D4AF37]' : 'text-[#71717A]'
-                    }`}
-                  >
-                    {weekDayName}
-                  </span>
-                )}
-
-                {/* Day number & Today indicator dot */}
-                <div className="flex items-center gap-1 my-0.5">
-                  <span
-                    className={`font-mono text-sm sm:text-base font-bold leading-tight ${
-                      isSelected
-                        ? 'text-[#D4AF37]'
-                        : isDayToday
-                        ? 'text-white'
-                        : 'text-[#E4E4E7]'
-                    }`}
-                  >
-                    {dayNum}
-                  </span>
-                  {isDayToday && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#D4AF37] animate-pulse" title="Hoje" />
-                  )}
-                </div>
-
-                {/* Status Indicator / Micro Badge */}
-                <div className="mt-0.5 w-full flex items-center justify-center">
-                  {hasReservas ? (
-                    <span className="bg-[#D4AF37]/15 border border-[#D4AF37]/30 text-[#D4AF37] text-[9px] font-bold px-1 py-0.2 rounded-md flex items-center gap-0.5 leading-tight">
-                      <span className="w-1 h-1 rounded-full bg-[#D4AF37]" />
-                      <span>{dayReservas.length} {dayReservas.length === 1 ? 'res.' : 'res.'}</span>
-                    </span>
-                  ) : (
-                    <span className="text-[9px] text-[#52525B] font-medium group-hover:text-[#71717A] transition-colors leading-tight">
-                      Livre
-                    </span>
-                  )}
-                </div>
+                Futuras
               </button>
-            );
-          })}
+            </div>
+          </div>
         </div>
 
-        {/* Selected Date Filter Banner */}
-        {selectedDateFilter && (
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 bg-[#18181B] border border-[#D4AF37]/40 p-3 rounded-xl text-xs animate-fade-in">
-            <div className="flex items-center space-x-2 text-white">
-              <Filter size={15} className="text-[#D4AF37] shrink-0" />
-              <span>
-                Filtrando reservas ativas para a data:{' '}
-                <strong className="text-[#D4AF37] font-mono">
-                  {selectedDateFilter.split('-').reverse().join('/')}
-                </strong>{' '}
-                ({getReservasForDate(new Date(selectedDateFilter + 'T12:00:00')).length} reserva(s) encontrada(s))
-              </span>
+        {/* 🪟 CARD FLUTUANTE / POPOVER SUSPENSO DIRETO ABAIXO DA SELEÇÃO */}
+        {isCalendarOpen && (
+          <div
+            onMouseDown={handleMouseDown}
+            style={{ transform: `translate3d(${dragPos?.x || 0}px, ${dragPos?.y || 0}px, 0)` }}
+            className="absolute left-0 right-0 top-full mt-2.5 z-50 bg-[#18181C]/50 backdrop-blur-xl border border-[#D4AF37]/40 rounded-2xl p-4 shadow-2xl space-y-3.5 animate-in fade-in slide-in-from-top-3 cursor-grab active:cursor-grabbing select-none"
+          >
+            {/* Header com Navegação e Período */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 border-b border-[#27272A] pb-3">
+              <div className="flex items-center space-x-2 text-xs text-[#A1A1AA]">
+                <span className="text-[#D4AF37] font-semibold">{getHeaderPeriodText()}</span>
+                <span>• Clique em um dia para filtrar os pedidos de reservas</span>
+              </div>
+
+              <div className="flex items-center space-x-1.5 self-end sm:self-auto">
+                <button
+                  type="button"
+                  onClick={handlePrev}
+                  className="no-drag p-1.5 bg-[#111113] hover:bg-[#27272A] text-[#A1A1AA] hover:text-white border border-[#27272A] rounded-xl transition-all cursor-pointer"
+                  title="Período Anterior"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleToday}
+                  className="no-drag flex items-center gap-1.5 px-3 py-1.5 bg-[#111113] hover:bg-[#27272A] text-xs font-semibold text-[#D4AF37] border border-[#27272A] rounded-xl transition-all cursor-pointer"
+                >
+                  <RotateCcw size={12} />
+                  <span>Hoje</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  className="no-drag p-1.5 bg-[#111113] hover:bg-[#27272A] text-[#A1A1AA] hover:text-white border border-[#27272A] rounded-xl transition-all cursor-pointer"
+                  title="Próximo Período"
+                >
+                  <ChevronRight size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsCalendarOpen(false)}
+                  className="no-drag p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/25 rounded-xl transition-all cursor-pointer ml-1"
+                  title="Fechar Calendário"
+                >
+                  <X size={15} />
+                </button>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setSelectedDateFilter(null)}
-              className="flex items-center space-x-1.5 text-[#A1A1AA] hover:text-white bg-[#27272A] hover:bg-[#3F3F46] px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer shrink-0"
+
+            {/* Controller de Modo de Seleção de Datas */}
+            <div className="no-drag flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 bg-[#111113]/40 p-2.5 rounded-xl border border-[#27272A] text-xs">
+              <div className="flex items-center space-x-2 flex-wrap gap-1.5">
+                <span className="text-[#A1A1AA] font-semibold text-[10px] uppercase tracking-wider">Modo de Seleção:</span>
+                <div className="flex items-center p-0.5 bg-[#0A0A0B] border border-[#27272A] rounded-lg text-[11px] gap-1 shadow-inner">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectionMode('INDIVIDUAL');
+                      setRangeStart(null);
+                      setRangeEnd(null);
+                    }}
+                    className={`no-drag px-2.5 py-1 rounded-md transition-all cursor-pointer font-semibold ${
+                      selectionMode === 'INDIVIDUAL'
+                        ? 'bg-[#D4AF37] text-[#0A0A0B]'
+                        : 'text-[#71717A] hover:text-white hover:bg-[#18181B]'
+                    }`}
+                  >
+                    Múltiplos Individuais
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectionMode('INTERVALO');
+                      setSelectedDates([]);
+                      setRangeStart(null);
+                      setRangeEnd(null);
+                    }}
+                    className={`no-drag px-2.5 py-1 rounded-md transition-all cursor-pointer font-semibold ${
+                      selectionMode === 'INTERVALO'
+                        ? 'bg-[#D4AF37] text-[#0A0A0B]'
+                        : 'text-[#71717A] hover:text-white hover:bg-[#18181B]'
+                    }`}
+                  >
+                    Intervalo Sequencial
+                  </button>
+                </div>
+              </div>
+
+              {selectedDates.length > 0 && (
+                <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0 w-full sm:w-auto">
+                  <span className="text-[#A1A1AA] text-[10px] font-medium uppercase tracking-wide">
+                    <strong className="text-[#D4AF37] font-mono text-xs">{selectedDates.length}</strong> dia(s) selecionado(s)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedDates([]);
+                      setRangeStart(null);
+                      setRangeEnd(null);
+                    }}
+                    className="no-drag text-[10px] text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 px-2 py-0.5 rounded-lg font-semibold transition-all cursor-pointer"
+                  >
+                    Limpar Seleção
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Nome dos dias da semana em modo Mensal */}
+            {modoCalendario === 'MENSAL' && (
+              <div className="grid grid-cols-7 gap-1 sm:gap-2 mb-1">
+                {DIAS_SEMANA.map((d) => (
+                  <div
+                    key={d}
+                    className="text-center text-[10px] font-bold uppercase tracking-wider text-[#71717A] py-1"
+                  >
+                    {d}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Grid de Dias do Calendário */}
+            <div
+              className={
+                modoCalendario === 'SEMANAL'
+                  ? 'grid grid-cols-7 gap-1.5 sm:gap-2'
+                  : modoCalendario === 'QUINZENAL'
+                  ? 'grid grid-cols-5 sm:grid-cols-8 md:grid-cols-15 gap-1.5 overflow-x-auto pb-1 no-scrollbar'
+                  : 'grid grid-cols-7 gap-1 sm:gap-1.5'
+              }
             >
-              <XCircle size={14} />
-              <span>Limpar Filtro por Data</span>
-            </button>
+              {calendarDays.map(({ date, dateKey, isCurrentMonth }) => {
+                const dayReservas = getReservasForDate(date);
+                const hasReservas = dayReservas.length > 0;
+                const isSelected = selectedDates.includes(dateKey);
+                const isRangeMiddle = selectionMode === 'INTERVALO' && rangeStart && rangeEnd && dateKey > rangeStart && dateKey < rangeEnd;
+                const isDayToday = isToday(date);
+                const dayNum = date.getDate();
+                const weekDayName = DIAS_SEMANA[(date.getDay() + 6) % 7];
+
+                return (
+                  <button
+                    type="button"
+                    key={dateKey}
+                    onClick={() => handleSelectDate(dateKey)}
+                    className={`no-drag group relative flex flex-col items-center justify-center p-1 sm:p-1.5 rounded-xl border text-center transition-all cursor-pointer select-none min-h-[42px] ${
+                      isSelected
+                        ? isRangeMiddle
+                          ? 'bg-[#D4AF37]/15 border-[#D4AF37]/40 text-[#D4AF37] shadow-sm'
+                          : 'bg-[#18181B] border-[#D4AF37] ring-2 ring-[#D4AF37]/30 shadow-md shadow-[#D4AF37]/10'
+                        : isDayToday
+                        ? 'bg-[#18181B] border-[#D4AF37]/70 shadow-sm'
+                        : !isCurrentMonth
+                        ? 'bg-[#0A0A0B]/40 border-[#27272A]/30 opacity-35 hover:opacity-100'
+                        : 'bg-[#0A0A0B] border-[#27272A] hover:border-[#3F3F46] hover:bg-[#18181B]/60'
+                    }`}
+                  >
+                    {modoCalendario !== 'MENSAL' && (
+                      <span
+                        className={`text-[8px] font-bold uppercase tracking-wider leading-none mb-0.5 ${
+                          isSelected || isDayToday ? 'text-[#D4AF37]' : 'text-[#71717A]'
+                        }`}
+                      >
+                        {weekDayName}
+                      </span>
+                    )}
+
+                    <div className="flex items-center gap-0.5 my-0">
+                      <span
+                        className={`font-mono text-[11px] sm:text-xs font-bold leading-tight ${
+                          isSelected
+                            ? 'text-[#D4AF37]'
+                            : isDayToday
+                            ? 'text-white'
+                            : 'text-[#E4E4E7]'
+                        }`}
+                      >
+                        {dayNum}
+                      </span>
+                      {isDayToday && (
+                        <span className="w-1 h-1 rounded-full bg-[#D4AF37] animate-pulse" title="Hoje" />
+                      )}
+                    </div>
+
+                    <div className="mt-0.5 w-full flex items-center justify-center">
+                      {hasReservas ? (
+                        <span className="bg-[#D4AF37]/15 border border-[#D4AF37]/30 text-[#D4AF37] text-[8px] font-bold px-1 py-0.5 rounded-md flex items-center gap-0.5 leading-tight">
+                          <span className="w-1 h-1 rounded-full bg-[#D4AF37]" />
+                          <span>{dayReservas.length} {dayReservas.length === 1 ? 'res.' : 'res.'}</span>
+                        </span>
+                      ) : (
+                        <span className="text-[8px] text-[#52525B] font-medium group-hover:text-[#71717A] transition-colors leading-tight">
+                          Livre
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
@@ -641,7 +879,10 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
               onClearFilters={() => {
                 setSearchTerm('');
                 setFilterStatus('TODOS');
-                setSelectedDateFilter(null);
+                setSelectedDates([]);
+                setRangeStart(null);
+                setRangeEnd(null);
+                setShowOnlyFuture(false);
                 setCurrentPage(1);
               }}
               actionText="Criar Nova Reserva"
@@ -717,6 +958,28 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                             <p className="text-[#A1A1AA]">
                               Devolução: <strong className="text-white">{formatarDataBr(reserva.dataDevolucao)}</strong>
                             </p>
+                            {(reserva.endereco || cliente.endereco) && (
+                              <div className="pt-2 border-t border-[#1C1C1F] mt-1.5 flex flex-col gap-1 text-[11px] text-[#A1A1AA]">
+                                <div className="flex items-start gap-1">
+                                  <MapPin size={11} className="text-[#D4AF37] shrink-0 mt-0.5" />
+                                  <span className="line-clamp-2">
+                                    Local: <strong className="text-white font-normal">{reserva.endereco || cliente.endereco}</strong>
+                                  </span>
+                                </div>
+                                {((reserva as any).valorFrete > 0 || (reserva as any).distanciaKm > 0) && (
+                                  <div className="flex flex-wrap items-center gap-1.5 pl-3.5 mt-0.5">
+                                    <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.2 rounded text-[10px] font-mono">
+                                      Frete: {formatarMoeda((reserva as any).valorFrete)}
+                                    </span>
+                                    {(reserva as any).distanciaKm > 0 && (
+                                      <span className="bg-blue-500/10 text-blue-400 border border-blue-500/20 px-1.5 py-0.2 rounded text-[10px] font-mono">
+                                        {(reserva as any).distanciaKm} Km
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -846,6 +1109,12 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                                   )}
                                 </div>
                                 <div className="text-[10px] text-[#71717A]">Tel: {cliente.telefone}</div>
+                                {(reserva.endereco || cliente.endereco) && (
+                                  <div className="text-[10px] text-[#D4AF37] mt-1 flex items-center gap-1" title={reserva.endereco || cliente.endereco}>
+                                    <MapPin size={9} />
+                                    <span className="truncate max-w-[180px]">{reserva.endereco || cliente.endereco}</span>
+                                  </div>
+                                )}
                               </td>
                               <td className="px-6 py-4 max-w-xs">
                                 <div className="flex flex-wrap gap-1">
@@ -985,6 +1254,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
         webForms={webForms}
         empresaConfig={empresaConfig}
         onClose={() => setSelectedOrcamentoReserva(null)}
+        onUpdateWebForm={onUpdateWebForm}
       />
     )}
 

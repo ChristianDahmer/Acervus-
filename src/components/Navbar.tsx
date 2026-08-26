@@ -1,6 +1,7 @@
 import React from 'react';
 import { getAppLogoUrl, handleLogoError } from '../utils/logoUtils';
-import { Package, Calendar, Users, Share2, Cpu, Code2, Building2, Plus, DollarSign, Wrench, FileText, Sparkles, ChevronDown, FolderKanban, MessageSquare, Palette, HardDrive, ShieldCheck, Smartphone, Instagram, FileSpreadsheet, LogOut, Layers, Pin, Sliders, Database, BookOpen } from 'lucide-react';
+import { AcervusSystemLogo } from './AcervusSystemLogo';
+import { Package, Calendar, Users, Share2, Cpu, Code2, Building2, Plus, DollarSign, Wrench, FileText, Sparkles, ChevronDown, FolderKanban, MessageSquare, Palette, HardDrive, ShieldCheck, Smartphone, Instagram, FileSpreadsheet, LogOut, Layers, Pin, Sliders, Database, BookOpen, Crown } from 'lucide-react';
 import { DispositivoAutorizado, ThemeConfig, EmpresaConfig } from '../types';
 import { getContrastTextColor } from '../utils/themeUtils';
 
@@ -11,6 +12,7 @@ interface NavbarProps {
   setEmpresaSubTab?: (subTab: any) => void;
   onOpenNovaReserva: () => void;
   onOpenAiAssistant?: () => void;
+  onOpenOnboardingWizard?: () => void;
   exibirGuiaArquitetura?: boolean;
   authenticatedDevice?: DispositivoAutorizado | null;
   onLogoff?: () => void;
@@ -25,6 +27,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   setEmpresaSubTab,
   onOpenNovaReserva,
   onOpenAiAssistant,
+  onOpenOnboardingWizard,
   exibirGuiaArquitetura = false,
   authenticatedDevice = null,
   onLogoff,
@@ -75,6 +78,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       title: 'Configurações Gerais',
       items: [
         { id: 'empresa', label: 'Dados Cadastrais', icon: Building2, type: 'subtab', target: 'empresa' },
+        { id: 'planos_assinatura', label: 'Planos & Suporte Técnico', icon: Crown, type: 'subtab', target: 'empresa' },
         { id: 'painel_configuracao', label: 'Painel de Configuração', icon: Sliders, type: 'subtab', target: 'empresa' },
         { id: 'categorias', label: 'Categorias do Acervo', icon: FolderKanban, type: 'subtab', target: 'empresa' },
         { id: 'personalizacao_abas', label: 'Personalização de Abas', icon: Layers, type: 'subtab', target: 'empresa' },
@@ -189,21 +193,28 @@ export const Navbar: React.FC<NavbarProps> = ({
             className="flex items-center space-x-3.5 cursor-pointer group py-1"
             onClick={() => setActiveTab('inventario')}
           >
-            {!!getAppLogoUrl(empresaConfig?.logoUrl) && (
-              <div className="w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center bg-transparent group-hover:scale-105 transition-all duration-200 shrink-0">
-                <img 
-                  src={getAppLogoUrl(empresaConfig?.logoUrl)} 
-                  alt={empresaConfig?.nomeFantasia || "Logo"} 
-                  className="w-full h-full object-contain filter drop-shadow-md" 
-                  referrerPolicy="no-referrer" 
-                  onError={handleLogoError}
-                />
-              </div>
-            )}
+            {/* System Logo - Preserved Acervus Core Coat of Arms */}
+            <AcervusSystemLogo size={100} showText={false} />
+
             <div className="flex flex-col justify-center">
-              <h1 className="font-serif italic text-2xl font-bold tracking-tight text-white group-hover:text-[#D4AF37] transition-colors">
-                {empresaConfig?.nomeFantasia || "Acervus"}
-              </h1>
+              <div className="flex items-center gap-2.5">
+                <h1 className="font-serif italic text-[18px] sm:text-[22px] font-bold tracking-tight text-white group-hover:text-[#D4AF37] transition-colors">
+                  {empresaConfig?.nomeFantasia || "Acervus Core"}
+                </h1>
+
+                {/* Logotipo da Empresa do Cliente (Locadora) */}
+                {!!getAppLogoUrl(empresaConfig?.logoUrl) && (
+                  <div className="w-[52px] h-[52px] sm:w-[60px] sm:h-[60px] rounded-xl bg-[#18181B] border border-[#27272A] p-1 flex items-center justify-center shrink-0 overflow-hidden shadow-md hover:scale-105 transition-all" title="Logotipo da Empresa Cliente">
+                    <img 
+                      src={getAppLogoUrl(empresaConfig?.logoUrl)} 
+                      alt={empresaConfig?.nomeFantasia || "Logo Empresa"} 
+                      className="w-full h-full object-contain filter drop-shadow-md rounded-lg" 
+                      referrerPolicy="no-referrer" 
+                      onError={handleLogoError}
+                    />
+                  </div>
+                )}
+              </div>
               <p className="text-[10px] uppercase tracking-widest text-[#71717A] font-medium">
                 {empresaConfig?.razaoSocial ? `${empresaConfig.razaoSocial} — Gestão` : "Gestão de Eventos & Acervo"}
               </p>
@@ -234,6 +245,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <span>MODO TESTE</span>
                   </div>
                 )}
+
+
               </div>
             </div>
           </div>

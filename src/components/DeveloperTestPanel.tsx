@@ -38,6 +38,7 @@ import {
   RefreshCw as RefreshIcon
 } from 'lucide-react';
 import { saveDocument, deleteDocument, fetchCollection, getActiveTenantId } from '../lib/firebaseSync';
+import { getEnvironmentInfo, getAppEnvOverride, setAppEnvOverride } from '../utils/envUtils';
 import { NfseAndroidDocView } from './NfseAndroidDocView';
 import { DatabaseExplorerView } from './DatabaseExplorerView';
 import { ClientUserAccessControlView } from './ClientUserAccessControlView';
@@ -99,6 +100,14 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
   const [isTestingCloudSql, setIsTestingCloudSql] = useState(false);
   const [isChangingAmbiente, setIsChangingAmbiente] = useState(false);
   const [isKillingSessions, setIsKillingSessions] = useState(false);
+  const [appEnvOverride, setAppEnvOverrideState] = useState<string | null>(() => getAppEnvOverride());
+
+  const handleSelectAppEnv = (envVal: string) => {
+    const newVal = envVal === 'auto' ? null : envVal;
+    setAppEnvOverride(newVal);
+    setAppEnvOverrideState(newVal);
+    addLog(`⚙️ [Runtime Env] Variável VITE_APP_ENV ajustada para: ${envVal.toUpperCase()}`, 'warn');
+  };
 
   const handleAmbienteChange = async (novoAmbiente: 'teste' | 'producao') => {
     if (isChangingAmbiente) return;
@@ -751,6 +760,97 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
                       </button>
                     </div>
                   </div>
+
+                  {/* Diagnóstico & Chaveamento de Ambiente de Execução (VITE_APP_ENV) */}
+                  {(() => {
+                    const envInfo = getEnvironmentInfo();
+                    const envOptions = [
+                      { id: 'auto', label: 'Auto (Detectar)', desc: 'Identifica por Host/iFrame' },
+                      { id: 'development', label: 'Desenvolvimento', desc: 'Modo Editor AI Studio' },
+                      { id: 'staging', label: 'Homologação/Staging', desc: 'Modo Preview Teste' },
+                      { id: 'production', label: 'Produção Web', desc: 'Modo Publicado Final' },
+                    ];
+
+                    return (
+                      <div className="bg-[#18181B] border border-[#27272A] rounded-2xl p-4 space-y-3">
+                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                          <label className="block font-medium text-[#E4E4E7] text-xs uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                            <Server size={14} className="text-cyan-400" /> Diagnóstico & Alternância de Ambiente Runtime (VITE_APP_ENV)
+                          </label>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase tracking-wider ${
+                            envInfo.isOverridden ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                            envInfo.isEditor ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' :
+                            envInfo.isPreview ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                            'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          }`}>
+                            {envInfo.isOverridden ? `SOBREPOSIÇÃO: ${envInfo.appEnv}` : envInfo.type}
+                          </span>
+                        </div>
+
+                        {/* Seletor do Ambiente Runtime */}
+                        <div className="bg-[#111113] p-3 rounded-xl border border-[#27272A] space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-white flex items-center gap-1.5 font-mono">
+                              <Sliders size={13} className="text-[#D4AF37]" />
+                              Alternar Variável VITE_APP_ENV Instantaneamente
+                            </span>
+                            {appEnvOverride && (
+                              <span className="text-[10px] text-amber-400 font-mono font-bold">
+                                ● Sobrescrito Manualmente
+                              </span>
+                            )}
+                          </div>
+                          
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+                            {envOptions.map((opt) => {
+                              const isSelected = (opt.id === 'auto' && !appEnvOverride) || appEnvOverride === opt.id;
+                              return (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  onClick={() => handleSelectAppEnv(opt.id)}
+                                  className={`p-2 rounded-lg text-left transition-all cursor-pointer border font-mono ${
+                                    isSelected
+                                      ? 'bg-[#D4AF37] text-black border-[#D4AF37] font-bold shadow-md shadow-[#D4AF37]/20 scale-[1.02]'
+                                      : 'bg-[#18181C] text-[#A1A1AA] border-[#27272A] hover:border-[#3F3F46] hover:text-white'
+                                  }`}
+                                >
+                                  <span className="block text-xs font-bold truncate">{opt.label}</span>
+                                  <span className={`block text-[9px] truncate mt-0.5 ${isSelected ? 'text-black/80' : 'text-[#71717A]'}`}>
+                                    {opt.desc}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Métricas do Diagnóstico */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-[11px]">
+                          <div className="bg-[#111113] p-2 rounded-lg border border-[#27272A]">
+                            <span className="text-[#71717A] text-[9px] block">Ambiente Ativo</span>
+                            <span className="text-white font-semibold truncate block">{envInfo.label}</span>
+                          </div>
+                          <div className="bg-[#111113] p-2 rounded-lg border border-[#27272A]">
+                            <span className="text-[#71717A] text-[9px] block">VITE_APP_ENV Efetivo</span>
+                            <span className="text-cyan-400 font-semibold truncate block">{envInfo.appEnv}</span>
+                          </div>
+                          <div className="bg-[#111113] p-2 rounded-lg border border-[#27272A]">
+                            <span className="text-[#71717A] text-[9px] block">Executando em iFrame</span>
+                            <span className={envInfo.isIframe ? 'text-amber-400 font-semibold block' : 'text-emerald-400 font-semibold block'}>
+                              {envInfo.isIframe ? 'Sim (Editor AI Studio)' : 'Não (Aba Direta)'}
+                            </span>
+                          </div>
+                          <div className="bg-[#111113] p-2 rounded-lg border border-[#27272A]">
+                            <span className="text-[#71717A] text-[9px] block">Host Atual</span>
+                            <span className="text-[#A1A1AA] font-semibold truncate block" title={envInfo.hostname}>
+                              {envInfo.hostname}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {/* Seed database */}
