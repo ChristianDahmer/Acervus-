@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { SYSTEM_VERSION_FULL } from '../config/version';
 import { EmpresaConfig, PainelConfiguracaoData, DispositivoAutorizado, ListVisibilityConfig, GoogleAccountConfig, GovBrConfig, NfseGovBrConfig, InstagramConfig } from '../types';
 import { googleSignIn, showGooglePicker, getAccessToken } from '../lib/googleWorkspace';
-import { performGoogleDriveBackup, getBackupHistory, BackupHistoryItem } from '../lib/googleDriveBackup';
+import { performGoogleDriveBackup, getBackupHistory, BackupHistoryItem, checkAndRunDailyAutoBackup, getLastAutoBackupInfo, AutoBackupMonitoringInfo, formatBackupDuration } from '../lib/googleDriveBackup';
 import { GOVBR_ENDPOINTS } from '../lib/govbrSignature';
+import { PWAInstallPanel } from './PWAInstallPanel';
 import {
   Sliders,
   Save,
@@ -94,7 +96,7 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
   googleAccount,
   onUpdateGoogleAccount
 }) => {
-  const [activeTab, setActiveTab] = useState<'listagens' | 'comercial' | 'inventario' | 'automacoes' | 'integracoes' | 'banco_dados' | 'backup'>('listagens');
+  const [activeTab, setActiveTab] = useState<'listagens' | 'comercial' | 'inventario' | 'automacoes' | 'integracoes' | 'banco_dados' | 'backup' | 'instalacao_app'>('listagens');
   const [integracaoSubTab, setIntegracaoSubTab] = useState<'whatsapp' | 'instagram' | 'govbr' | 'nfse_govbr' | 'google_drive'>('whatsapp');
 
   const [config, setConfig] = useState<PainelConfiguracaoData>(() => ({
@@ -293,13 +295,14 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
   const [customAccountEmail, setCustomAccountEmail] = useState('');
   const [isLoggingInGoogle, setIsLoggingInGoogle] = useState(false);
   const [driveNotice, setDriveNotice] = useState<string | null>(null);
-  const [selectedFolderPath, setSelectedFolderPath] = useState(googleAccount?.driveFolderPath || '/Bora Festar Locações/Formulários');
+  const [selectedFolderPath, setSelectedFolderPath] = useState(googleAccount?.driveFolderPath || '/Meu Drive/Locadora/Formulários');
 
-  // Google Drive Auto Backup State
+  // Google Drive Auto Backup State & Monitoring Info
   const [backupAutoDriveEnabled, setBackupAutoDriveEnabled] = useState(() => empresaConfig.backupAutoDriveEnabled !== false);
   const [isRunningDriveBackup, setIsRunningDriveBackup] = useState(false);
   const [driveBackupNotice, setDriveBackupNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [backupHistoryList, setBackupHistoryList] = useState<BackupHistoryItem[]>(() => getBackupHistory());
+  const [autoBackupInfo, setAutoBackupInfo] = useState<AutoBackupMonitoringInfo>(() => getLastAutoBackupInfo(empresaConfig));
 
   const handleManualDriveBackup = async () => {
     setIsRunningDriveBackup(true);
@@ -315,8 +318,31 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
         setDriveBackupNotice({ type: 'error', text: res.message });
       }
       setBackupHistoryList(getBackupHistory());
+      setAutoBackupInfo(getLastAutoBackupInfo(empresaConfig));
     } catch (err: any) {
       setDriveBackupNotice({ type: 'error', text: err.message || 'Erro ao executar backup manual no Google Drive.' });
+    } finally {
+      setIsRunningDriveBackup(false);
+    }
+  };
+
+  const handleRunDailyAutoBackupCheck = async (force: boolean = false) => {
+    setIsRunningDriveBackup(true);
+    setDriveBackupNotice(null);
+    try {
+      const res = await checkAndRunDailyAutoBackup(
+        { ...empresaConfig, habilitarGoogleDrive, backupAutoDriveEnabled, googleAccount },
+        force
+      );
+      if (res.success) {
+        setDriveBackupNotice({ type: 'success', text: res.message });
+      } else {
+        setDriveBackupNotice({ type: 'error', text: res.message });
+      }
+      setBackupHistoryList(getBackupHistory());
+      setAutoBackupInfo(getLastAutoBackupInfo(empresaConfig));
+    } catch (err: any) {
+      setDriveBackupNotice({ type: 'error', text: err.message || 'Erro ao executar verificação do backup automático.' });
     } finally {
       setIsRunningDriveBackup(false);
     }
@@ -361,7 +387,7 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
         email,
         displayName: name,
         connectedAt: Date.now(),
-        driveFolderPath: googleAccount?.driveFolderPath || '/Bora Festar Locações/Formulários',
+        driveFolderPath: googleAccount?.driveFolderPath || '/Meu Drive/Locadora/Formulários',
       });
     }
     setIsAccountModalOpen(false);
@@ -499,7 +525,7 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
         habilitarGoogleDrive,
         habilitarGoogleForms,
         exportDate: new Date().toISOString(),
-        systemVersion: 'Acervus Core v2.4 (Multi-Tenant)',
+        systemVersion: SYSTEM_VERSION_FULL,
       };
       const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -732,6 +758,19 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
           >
             <HardDrive size={15} />
             <span>Backup & Manutenção</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('instalacao_app')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
+              activeTab === 'instalacao_app'
+                ? 'bg-[#D4AF37] text-black shadow-md shadow-[#D4AF37]/20'
+                : 'text-amber-400 hover:text-amber-300 hover:bg-[#18181B] border border-amber-500/20'
+            }`}
+          >
+            <Download size={15} className="text-amber-400" />
+            <span>Instalar no Android & PC</span>
           </button>
         </div>
       </div>
@@ -2216,7 +2255,7 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
                             </span>
                           </div>
                           <span className="text-[11px] text-[#A1A1AA] font-mono">
-                            Pasta: <strong className="text-white">{googleAccount?.driveFolderPath || '/Bora Festar Locações/Formulários'}</strong>
+                            Pasta: <strong className="text-white">{googleAccount?.driveFolderPath || '/Meu Drive/Locadora/Formulários'}</strong>
                           </span>
                         </div>
 
@@ -2243,14 +2282,14 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
                                     <div>
                                       <div className="flex items-center gap-2 flex-wrap">
                                         <h4 className="text-white text-xs font-bold">
-                                          {googleAccount.email || 'locadora.borafestar@gmail.com'}
+                                          {googleAccount.email || 'conta@google.com'}
                                         </h4>
                                         <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
                                           <CheckCircle2 size={11} /> Conta Conectada
                                         </span>
                                       </div>
                                       <p className="text-[#A1A1AA] text-[11px] mt-0.5">
-                                        {googleAccount.displayName || 'Bora Festar Locações'}
+                                        {googleAccount.displayName || empresaConfig.nomeFantasia || 'Minha Locadora'}
                                       </p>
                                     </div>
                                   </div>
@@ -2304,7 +2343,7 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
                                         Pasta de Destino no Google Drive
                                       </span>
                                       <span className="text-white text-xs font-semibold font-mono mt-0.5 block">
-                                        {googleAccount.driveFolderPath || '/Bora Festar Locações/Formulários'}
+                                        {googleAccount.driveFolderPath || '/Meu Drive/Locadora/Formulários'}
                                       </span>
                                     </div>
                                   </div>
@@ -2603,16 +2642,16 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
             </div>
 
             <div className="space-y-4">
-              {/* CARD: Backup Automático no Google Drive */}
-              <div className="p-5 bg-[#18181B] rounded-xl border border-[#27272A] space-y-4 shadow-lg">
+              {/* CARD: Painel de Monitoramento do Backup Automático Diário (checkAndRunDailyAutoBackup) */}
+              <div className="p-5 bg-[#18181B] rounded-xl border border-[#27272A] space-y-4 shadow-xl">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-[#27272A] pb-3">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-[#D4AF37]/10 border border-[#D4AF37]/30 flex items-center justify-center text-[#D4AF37] shrink-0">
-                      <FolderGit2 size={20} />
+                      <Activity size={20} />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="text-white text-xs font-bold block">Backup Automático Diário no Google Drive</span>
+                        <span className="text-white text-xs font-bold block">Painel de Monitoramento: Backup Automático Diário</span>
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase border ${
                           backupAutoDriveEnabled
                             ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
@@ -2622,7 +2661,7 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
                         </span>
                       </div>
                       <span className="text-[#A1A1AA] text-xs mt-0.5 block">
-                        Gera e envia automaticamente um dump JSON completo do banco de dados ao final de cada dia para a pasta do Google Drive.
+                        Monitora o status de integridade, histórico e gatilhos da rotina <code className="text-[#D4AF37] font-mono text-[11px]">checkAndRunDailyAutoBackup</code>.
                       </span>
                     </div>
                   </div>
@@ -2630,7 +2669,11 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
                   {/* Toggle Switch */}
                   <button
                     type="button"
-                    onClick={() => setBackupAutoDriveEnabled(!backupAutoDriveEnabled)}
+                    onClick={() => {
+                      const nextVal = !backupAutoDriveEnabled;
+                      setBackupAutoDriveEnabled(nextVal);
+                      setTimeout(() => setAutoBackupInfo(getLastAutoBackupInfo({ ...empresaConfig, backupAutoDriveEnabled: nextVal })), 50);
+                    }}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer shrink-0 ${
                       backupAutoDriveEnabled ? 'bg-[#D4AF37]' : 'bg-[#27272A]'
                     }`}
@@ -2641,6 +2684,63 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
                       }`}
                     />
                   </button>
+                </div>
+
+                {/* WIDGET DE STATUS & ÚLTIMA EXECUÇÃO */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* Box 1: Status da Rotina Hoje */}
+                  <div className="p-3.5 bg-[#111113] rounded-xl border border-[#27272A] space-y-1">
+                    <span className="text-[10px] uppercase font-mono text-[#71717A] block">Status do Backup de Hoje</span>
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2.5 h-2.5 rounded-full ${
+                        autoBackupInfo.isRunToday
+                          ? 'bg-emerald-400 animate-pulse'
+                          : autoBackupInfo.lastStatus === 'ERRO'
+                          ? 'bg-red-400'
+                          : backupAutoDriveEnabled
+                          ? 'bg-amber-400 animate-pulse'
+                          : 'bg-zinc-600'
+                      }`} />
+                      <span className="text-xs font-bold text-white">
+                        {autoBackupInfo.isRunToday
+                          ? 'Concluído com Sucesso'
+                          : autoBackupInfo.lastStatus === 'ERRO'
+                          ? 'Falha no Último Envio'
+                          : backupAutoDriveEnabled
+                          ? 'Pendente de Execução Hoje'
+                          : 'Rotina Desativada'}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-[#A1A1AA] block">
+                      {autoBackupInfo.isRunToday
+                        ? 'Cópia de segurança enviada para o Google Drive hoje.'
+                        : 'A rotina checkAndRunDailyAutoBackup executará na primeira oportunidade.'}
+                    </span>
+                  </div>
+
+                  {/* Box 2: Data e Hora do Último Backup */}
+                  <div className="p-3.5 bg-[#111113] rounded-xl border border-[#27272A] space-y-1">
+                    <span className="text-[10px] uppercase font-mono text-[#71717A] block">Data / Hora do Último Backup</span>
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-white">
+                      <Clock size={13} className="text-[#D4AF37]" />
+                      <span>{autoBackupInfo.lastFormattedTime || 'Nenhum backup realizado'}</span>
+                    </div>
+                    <span className="text-[10px] text-[#A1A1AA] block truncate">
+                      {autoBackupInfo.lastItem?.fileName || 'Sem arquivo salvo ainda'}
+                    </span>
+                  </div>
+
+                  {/* Box 3: Total de Registros Preservados */}
+                  <div className="p-3.5 bg-[#111113] rounded-xl border border-[#27272A] space-y-1">
+                    <span className="text-[10px] uppercase font-mono text-[#71717A] block">Métricas do Dump de Segurança</span>
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-400">
+                      <ShieldCheck size={13} className="text-emerald-400" />
+                      <span>{autoBackupInfo.lastItem?.recordCount || 0} objetos no acervo</span>
+                    </div>
+                    <span className="text-[10px] text-[#A1A1AA] block">
+                      Gatilho: {autoBackupInfo.lastItem?.triggerType === 'AUTOMATICO_DIARIO' ? 'Diário Automático' : autoBackupInfo.lastItem?.triggerType === 'MANUAL' ? 'Disparo Manual' : 'Indeterminado'}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Status da Conta & Pasta */}
@@ -2665,7 +2765,7 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
 
                   <div className="p-3 bg-[#111113] rounded-lg border border-[#27272A] flex items-center justify-between">
                     <span className="text-xs text-[#A1A1AA]">
-                      Pasta de Destino: <strong className="text-white">{googleAccount?.driveFolderPath || '/Bora Festar Locações/Backups'}</strong>
+                      Pasta de Destino: <strong className="text-white">{googleAccount?.driveFolderPath || '/Meu Drive/Locadora/Backups'}</strong>
                     </span>
                     <button
                       type="button"
@@ -2677,8 +2777,8 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
                   </div>
                 </div>
 
-                {/* Rodapé e Ação Manual */}
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+                {/* Ações de Disparo Manual & Rotina Auto Backup */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2 border-t border-[#27272A]">
                   <div className="text-[11px] text-[#A1A1AA] flex items-center gap-1.5">
                     <Clock size={14} className="text-[#D4AF37]" />
                     <span>
@@ -2686,18 +2786,31 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
                     </span>
                   </div>
 
-                  <button
-                    type="button"
-                    disabled={isRunningDriveBackup}
-                    onClick={handleManualDriveBackup}
-                    className="px-4 py-2 bg-gradient-to-r from-[#D4AF37] to-[#B89628] hover:from-[#E5C158] hover:to-[#D4AF37] text-black font-bold rounded-xl text-xs transition-all shadow-md shadow-[#D4AF37]/10 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shrink-0"
-                  >
-                    {isRunningDriveBackup ? <Loader2 size={14} className="animate-spin" /> : <HardDrive size={14} />}
-                    <span>{isRunningDriveBackup ? 'Enviando...' : 'Fazer Backup no Google Drive Agora'}</span>
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={isRunningDriveBackup}
+                      onClick={() => handleRunDailyAutoBackupCheck(false)}
+                      className="px-3.5 py-2 bg-[#27272A] hover:bg-[#3F3F46] text-[#D4AF37] hover:text-white font-semibold rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      title="Executa a verificação checkAndRunDailyAutoBackup"
+                    >
+                      {isRunningDriveBackup ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                      <span>Testar Rotina Auto</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isRunningDriveBackup}
+                      onClick={() => handleRunDailyAutoBackupCheck(true)}
+                      className="px-4 py-2 bg-gradient-to-r from-[#D4AF37] to-[#B89628] hover:from-[#E5C158] hover:to-[#D4AF37] text-black font-bold rounded-xl text-xs transition-all shadow-md shadow-[#D4AF37]/10 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shrink-0"
+                    >
+                      {isRunningDriveBackup ? <Loader2 size={14} className="animate-spin" /> : <HardDrive size={14} />}
+                      <span>{isRunningDriveBackup ? 'Enviando...' : 'Disparar Backup Manual Agora'}</span>
+                    </button>
+                  </div>
                 </div>
 
-                {/* Notificação da ação */}
+                {/* Banner de Notificação da Ação */}
                 {driveBackupNotice && (
                   <div className={`p-3 rounded-xl text-xs flex items-center justify-between ${
                     driveBackupNotice.type === 'success'
@@ -2714,41 +2827,126 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
                   </div>
                 )}
 
-                {/* Histórico de Backups Recentes */}
-                {backupHistoryList.length > 0 && (
-                  <div className="space-y-2 pt-2 border-t border-[#27272A]">
-                    <span className="text-white text-xs font-bold block">Histórico de Backups no Google Drive</span>
-                    <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
-                      {backupHistoryList.map((item) => (
-                        <div key={item.id} className="p-2.5 bg-[#111113] rounded-lg border border-[#27272A] flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-2.5">
-                            <div className={`w-2 h-2 rounded-full ${item.status === 'SUCESSO' ? 'bg-emerald-400' : 'bg-red-400'}`} />
-                            <div>
-                              <span className="text-white font-mono text-[11px] block">{item.fileName}</span>
-                              <span className="text-[#A1A1AA] text-[10px]">
-                                {new Date(item.timestamp).toLocaleString('pt-BR')} • {item.triggerType === 'AUTOMATICO_DIARIO' ? 'Diário Automático' : 'Manual'} • {item.recordCount} registros
-                              </span>
-                            </div>
-                          </div>
-                          {item.webViewLink ? (
-                            <a
-                              href={item.webViewLink}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[#D4AF37] hover:underline text-[11px] font-semibold flex items-center gap-1"
-                            >
-                              <ExternalLink size={12} /> Visualizar
-                            </a>
-                          ) : (
-                            <span className={`text-[10px] font-bold ${item.status === 'SUCESSO' ? 'text-emerald-400' : 'text-red-400'}`}>
-                              {item.status}
-                            </span>
-                          )}
-                        </div>
-                      ))}
+                {/* SUBSEÇÃO: Monitoramento de Backup (Tabela de Histórico das Últimas Execuções) */}
+                <div className="space-y-3 pt-3 border-t border-[#27272A]">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-white text-xs font-bold flex items-center gap-1.5 uppercase tracking-wider">
+                        <Activity size={14} className="text-[#D4AF37]" />
+                        Subseção: Monitoramento de Backup
+                      </h4>
+                      <p className="text-[11px] text-[#A1A1AA] mt-0.5">
+                        Histórico completo das últimas execuções registradas pela rotina de backup no Google Drive.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-[#71717A] font-mono">
+                        {backupHistoryList.length} registro(s) encontrado(s)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBackupHistoryList(getBackupHistory());
+                          setAutoBackupInfo(getLastAutoBackupInfo(empresaConfig));
+                        }}
+                        className="p-1.5 bg-[#27272A] hover:bg-[#3F3F46] text-[#D4AF37] rounded-lg transition-colors cursor-pointer"
+                        title="Atualizar lista de monitoramento"
+                      >
+                        <RefreshCw size={12} />
+                      </button>
                     </div>
                   </div>
-                )}
+
+                  {backupHistoryList.length === 0 ? (
+                    <div className="p-6 bg-[#111113] rounded-xl border border-[#27272A] text-center space-y-2">
+                      <Clock size={24} className="mx-auto text-[#71717A]" />
+                      <p className="text-xs font-semibold text-white">Nenhum histórico de backup registrado ainda</p>
+                      <p className="text-[11px] text-[#A1A1AA] max-w-md mx-auto">
+                        Conecte a conta do Google Drive e clique em <strong>"Disparar Backup Manual Agora"</strong> ou <strong>"Testar Rotina Auto"</strong> para gerar o primeiro log no monitoramento.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-[#27272A] bg-[#111113]">
+                      <table className="w-full text-left text-xs text-[#A1A1AA] border-collapse">
+                        <thead className="bg-[#18181B] text-[10px] font-mono uppercase text-[#71717A] border-b border-[#27272A]">
+                          <tr>
+                            <th className="py-2.5 px-3 font-semibold">Data / Hora</th>
+                            <th className="py-2.5 px-3 font-semibold">Origem / Gatilho</th>
+                            <th className="py-2.5 px-3 font-semibold">Status</th>
+                            <th className="py-2.5 px-3 font-semibold">Tempo de Duração</th>
+                            <th className="py-2.5 px-3 font-semibold">Dump / Objetos</th>
+                            <th className="py-2.5 px-3 font-semibold text-right">Arquivo / Link</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#27272A]">
+                          {backupHistoryList.map((item) => {
+                            const dateFormatted = new Date(item.timestamp).toLocaleString('pt-BR');
+                            const durationFormatted = formatBackupDuration(item.durationMs);
+                            const isSuccess = item.status === 'SUCESSO';
+
+                            return (
+                              <tr key={item.id} className="hover:bg-[#18181B]/60 transition-colors">
+                                <td className="py-2.5 px-3 text-white font-medium whitespace-nowrap">
+                                  <div className="flex items-center gap-1.5">
+                                    <Clock size={12} className="text-[#D4AF37] shrink-0" />
+                                    <span>{dateFormatted}</span>
+                                  </div>
+                                </td>
+
+                                <td className="py-2.5 px-3 whitespace-nowrap">
+                                  <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md font-medium border ${
+                                    item.triggerType === 'AUTOMATICO_DIARIO'
+                                      ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                                      : 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+                                  }`}>
+                                    {item.triggerType === 'AUTOMATICO_DIARIO' ? 'Diário Auto' : 'Manual'}
+                                  </span>
+                                </td>
+
+                                <td className="py-2.5 px-3 whitespace-nowrap">
+                                  <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold border ${
+                                    isSuccess
+                                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                      : 'bg-red-500/10 text-red-400 border-red-500/30'
+                                  }`}>
+                                    <span className={`w-1.5 h-1.5 rounded-full ${isSuccess ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                                    {isSuccess ? 'SUCESSO' : 'FALHA'}
+                                  </span>
+                                </td>
+
+                                <td className="py-2.5 px-3 font-mono text-white text-[11px] whitespace-nowrap">
+                                  {durationFormatted}
+                                </td>
+
+                                <td className="py-2.5 px-3 text-[#A1A1AA] whitespace-nowrap">
+                                  <span className="text-emerald-400 font-semibold">{item.recordCount}</span> registros
+                                </td>
+
+                                <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                                  {item.webViewLink ? (
+                                    <a
+                                      href={item.webViewLink}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="inline-flex items-center gap-1 text-[#D4AF37] hover:text-[#E5C158] hover:underline font-semibold text-[11px]"
+                                    >
+                                      <span>Drive</span>
+                                      <ExternalLink size={12} />
+                                    </a>
+                                  ) : (
+                                    <span className="text-[10px] text-[#71717A] font-mono truncate max-w-[120px] inline-block">
+                                      {item.fileName}
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="p-4 bg-[#18181B] rounded-xl border border-[#27272A] space-y-3">
@@ -2783,6 +2981,13 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ABA 8: Instalação no Android & Windows */}
+        {activeTab === 'instalacao_app' && (
+          <div className="bg-[#111113] border border-[#27272A] rounded-2xl p-6 shadow-xl animate-fadeIn">
+            <PWAInstallPanel />
           </div>
         )}
       </div>
@@ -2917,7 +3122,7 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
               <label className="text-xs font-bold text-white block">Atalhos de Pastas Recomendadas:</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {[
-                  '/Bora Festar Locações/Formulários',
+                  '/Meu Drive/Locadora/Formulários',
                   '/Meu Drive/Orçamentos Clientes',
                   '/Google Forms/Eventos e Locações',
                   '/Atendimento WhatsApp/Formulários',
@@ -2952,7 +3157,7 @@ export const PainelConfiguracaoView: React.FC<PainelConfiguracaoViewProps> = ({
                 value={selectedFolderPath}
                 onChange={(e) => setSelectedFolderPath(e.target.value)}
                 className="w-full px-3.5 py-2.5 bg-[#111113] border border-[#27272A] rounded-xl text-xs text-white focus:border-[#D4AF37] focus:outline-none placeholder-[#71717A] font-mono tracking-wide shadow-inner"
-                placeholder="Ex: /Bora Festar Locações/Formulários"
+                placeholder="Ex: /Meu Drive/Locadora/Formulários"
               />
             </div>
 

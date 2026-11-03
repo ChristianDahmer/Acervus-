@@ -128,6 +128,9 @@ export const PropostaOrcamentoView: React.FC<PropostaOrcamentoViewProps> = ({
   const [distanciaKm, setDistanciaKm] = useState<number>(0);
   const [valorFrete, setValorFrete] = useState<number>(0);
   const [valorFretePorKm, setValorFretePorKm] = useState<number>(currentEmpresaConfig?.valorFretePorKm || empresaConfig?.valorFretePorKm || 0);
+  const [numeroDeslocamentosFrete, setNumeroDeslocamentosFrete] = useState<number>(
+    currentEmpresaConfig?.numeroDeslocamentosFrete || empresaConfig?.numeroDeslocamentosFrete || 4
+  );
   const [calculandoFrete, setCalculandoFrete] = useState<boolean>(false);
 
   // Sync with company config value when it changes
@@ -136,13 +139,17 @@ export const PropostaOrcamentoView: React.FC<PropostaOrcamentoViewProps> = ({
     if (rate !== undefined) {
       setValorFretePorKm(rate);
     }
+    const legs = currentEmpresaConfig?.numeroDeslocamentosFrete || empresaConfig?.numeroDeslocamentosFrete;
+    if (legs !== undefined) {
+      setNumeroDeslocamentosFrete(legs);
+    }
   }, [currentEmpresaConfig, empresaConfig]);
 
-  // Recalculate freight cost when distance or rate per km changes
+  // Recalculate freight cost when distance, rate per km or number of legs changes
   useEffect(() => {
-    const calculated = calcularValorFrete(distanciaKm, valorFretePorKm);
+    const calculated = calcularValorFrete(distanciaKm, valorFretePorKm, numeroDeslocamentosFrete);
     setValorFrete(calculated);
-  }, [distanciaKm, valorFretePorKm]);
+  }, [distanciaKm, valorFretePorKm, numeroDeslocamentosFrete]);
 
   // Editable Proposal Text State
   const [isEditingIntro, setIsEditingIntro] = useState(false);
@@ -541,7 +548,7 @@ PROPOSTA E RESERVA CONFIRMADA #${proposta.id}
 =============================================================
 
 1. IDENTIFICAÇÃO DAS PARTES:
-LOCATOR: ${empresaConfig.razaoSocial || empresaConfig.nomeFantasia || 'Bora Festar Locações'}
+LOCATOR: ${empresaConfig.razaoSocial || empresaConfig.nomeFantasia || 'Locadora de Acervo'}
 CNPJ: ${empresaConfig.cnpj || 'Não Informado'}
 Endereço: ${empresaConfig.enderecoCompleto || 'Consulte o locador'}
 
@@ -762,7 +769,7 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
                 )}
                 <div className="text-left hidden sm:block">
                   <span className="text-[10px] uppercase font-bold text-[#D4AF37] tracking-wider block">Locador</span>
-                  <span className="text-xs font-semibold text-[#E4E4E7] line-clamp-1">{currentEmpresaConfig?.nomeFantasia || 'Bora Festar'}</span>
+                  <span className="text-xs font-semibold text-[#E4E4E7] line-clamp-1">{currentEmpresaConfig?.nomeFantasia || 'Minha Locadora'}</span>
                 </div>
               </div>
 
@@ -781,7 +788,7 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
             {/* Central Title & Address */}
             <div className="space-y-0.5 text-center mt-0.5">
               <h1 className="text-[18px] sm:text-[22px] font-serif italic font-extrabold text-white tracking-tight leading-tight">
-                {currentEmpresaConfig?.nomeFantasia || 'Bora Festar Locações'}
+                {currentEmpresaConfig?.nomeFantasia || 'Minha Locadora'}
               </h1>
               
               <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-[11px] text-[#A1A1AA]">
@@ -1243,7 +1250,7 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
                     <input
                       type="text"
                       required
-                      placeholder="Ex: Mariana Lima"
+                      placeholder="Ex: Maria da Silva"
                       value={nomeCliente}
                       onChange={(e) => setNomeCliente(e.target.value)}
                       className="w-full pl-9.5 pr-3.5 py-2.5 bg-[#111113] border border-[#27272A] rounded-xl text-white focus:border-[#D4AF37] focus:outline-none"
@@ -1257,7 +1264,7 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
                     value={whatsapp}
                     onChange={(val) => setWhatsapp(val)}
                     required
-                    placeholder="(11) 99999-8888"
+                    placeholder="(11) 98765-4321"
                   />
                 </div>
 
@@ -1287,10 +1294,19 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
                         onClick={async () => {
                           setCalculandoFrete(true);
                           try {
+                            const origemAddress = currentEmpresaConfig?.enderecoCompleto || empresaConfig?.enderecoCompleto || formatEnderecoCompleto({
+                              logradouro: currentEmpresaConfig?.rua || empresaConfig?.rua,
+                              numero: currentEmpresaConfig?.numero || empresaConfig?.numero,
+                              bairro: currentEmpresaConfig?.bairro || empresaConfig?.bairro,
+                              cidade: currentEmpresaConfig?.cidade || empresaConfig?.cidade,
+                              estado: currentEmpresaConfig?.uf || empresaConfig?.uf,
+                              cep: currentEmpresaConfig?.cep || empresaConfig?.cep,
+                            }) || 'São Paulo, SP';
+
                             const res = await calcularDistanciaRealOuSimulada(
-                              empresaConfig?.enderecoCompleto || 'Rua das Flores, 100 - São Paulo, SP',
+                              origemAddress,
                               endereco,
-                              empresaConfig?.googleMapsApiKey
+                              currentEmpresaConfig?.googleMapsApiKey || empresaConfig?.googleMapsApiKey
                             );
                             setDistanciaKm(res.distanciaKm);
                             const calculated = calcularValorFrete(res.distanciaKm, valorFretePorKm);
@@ -1323,7 +1339,7 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
                     </div>
                     {distanciaKm > 0 && (
                       <p className="text-[9px] text-[#71717A] leading-tight">
-                        * Cálculo baseado no deslocamento a partir de nossa sede em <span className="italic">{empresaConfig?.enderecoCompleto || 'Rua das Flores, 100'}</span>.
+                        * Cálculo baseado no deslocamento a partir de nossa sede (<span className="italic">{currentEmpresaConfig?.enderecoCompleto || empresaConfig?.enderecoCompleto || 'Sede da Empresa'}</span>).
                       </p>
                     )}
                   </div>
@@ -1532,7 +1548,7 @@ Status da Assinatura: VÁLIDO E REGISTRADO NO SISTEMA`;
                 </button>
 
                 <p className="text-center text-[10px] text-[#71717A] pt-1 flex items-center justify-center gap-1">
-                  <ShieldCheck size={12} /> Link seguro e homologado pelo sistema de acervos Bora Festar.
+                  <ShieldCheck size={12} /> Link seguro e homologado pelo sistema de acervos Acervus Core.
                 </p>
               </div>
             )}

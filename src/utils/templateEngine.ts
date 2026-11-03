@@ -11,19 +11,19 @@ export interface TemplateTag {
 
 export const AVAILABLE_TEMPLATE_TAGS: TemplateTag[] = [
   // Empresa
-  { tag: '{NOME_EMPRESA}', label: 'Nome Fantasia da Empresa', category: 'EMPRESA', description: 'Nome de fantasia da locadora', example: 'Bora Festar Locações' },
-  { tag: '{RAZAO_SOCIAL}', label: 'Razão Social', category: 'EMPRESA', description: 'Razão social registrada', example: 'Bora Festar Eventos LTDA' },
-  { tag: '{CNPJ}', label: 'CNPJ da Empresa', category: 'EMPRESA', description: 'CNPJ formatado', example: '45.678.910/0001-23' },
-  { tag: '{ENDERECO_EMPRESA}', label: 'Endereço da Empresa', category: 'EMPRESA', description: 'Logradouro completo', example: 'Rua das Festas, 500' },
-  { tag: '{TELEFONE_EMPRESA}', label: 'WhatsApp da Empresa', category: 'EMPRESA', description: 'Telefone comercial', example: '(11) 99999-8888' },
-  { tag: '{REPRESENTANTE_EMPRESA}', label: 'Representante Legal', category: 'EMPRESA', description: 'Nome do gestor / representante', example: 'Juliana Medeiros' },
+  { tag: '{NOME_EMPRESA}', label: 'Nome Fantasia da Empresa', category: 'EMPRESA', description: 'Nome de fantasia da locadora', example: 'Minha Locadora' },
+  { tag: '{RAZAO_SOCIAL}', label: 'Razão Social', category: 'EMPRESA', description: 'Razão social registrada', example: 'Minha Locadora LTDA' },
+  { tag: '{CNPJ}', label: 'CNPJ da Empresa', category: 'EMPRESA', description: 'CNPJ formatado', example: '00.000.000/0001-00' },
+  { tag: '{ENDERECO_EMPRESA}', label: 'Endereço da Empresa', category: 'EMPRESA', description: 'Logradouro completo', example: 'Av. Paulista, 1000 - Bela Vista' },
+  { tag: '{TELEFONE_EMPRESA}', label: 'WhatsApp da Empresa', category: 'EMPRESA', description: 'Telefone comercial', example: '(11) 98765-4321' },
+  { tag: '{REPRESENTANTE_EMPRESA}', label: 'Representante Legal', category: 'EMPRESA', description: 'Nome do gestor / representante', example: 'Gestor Responsável' },
 
   // Cliente
   { tag: '{NOME_CLIENTE}', label: 'Nome do Cliente', category: 'CLIENTE', description: 'Nome completo do contratante', example: 'Ana Carolina Silva' },
-  { tag: '{CPF_CNPJ_CLIENTE}', label: 'CPF/CNPJ do Cliente', category: 'CLIENTE', description: 'Documento oficial do cliente', example: '123.456.789-00' },
+  { tag: '{CPF_CNPJ_CLIENTE}', label: 'CPF/CNPJ do Cliente', category: 'CLIENTE', description: 'Documento oficial do cliente', example: '000.000.000-00' },
   { tag: '{TELEFONE_CLIENTE}', label: 'Telefone do Cliente', category: 'CLIENTE', description: 'Telefone / WhatsApp do cliente', example: '(11) 98765-4321' },
-  { tag: '{EMAIL_CLIENTE}', label: 'E-mail do Cliente', category: 'CLIENTE', description: 'E-mail principal do cliente', example: 'ana.silva@email.com' },
-  { tag: '{ENDERECO_CLIENTE}', label: 'Endereço do Cliente', category: 'CLIENTE', description: 'Endereço cadastrado', example: 'Av. Paulista, 1000' },
+  { tag: '{EMAIL_CLIENTE}', label: 'E-mail do Cliente', category: 'CLIENTE', description: 'E-mail principal do cliente', example: 'cliente@exemplo.com' },
+  { tag: '{ENDERECO_CLIENTE}', label: 'Endereço do Cliente', category: 'CLIENTE', description: 'Endereço cadastrado', example: 'Rua Exemplo, 123' },
 
   // Reserva
   { tag: '{ID_RESERVA}', label: 'Número da Reserva', category: 'RESERVA', description: 'Código único da reserva', example: '#101' },

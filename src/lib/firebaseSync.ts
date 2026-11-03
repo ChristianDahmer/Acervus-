@@ -18,8 +18,43 @@ import {
   RegistroManutencao, 
   EmpresaConfig, 
   ThemeConfig,
-  FormularioWeb
+  FormularioWeb,
+  DispositivoAutorizado
 } from '../types';
+
+// Usuário Mestre Oficial com Gestão Plena Global e Acesso Total Cross-Tenant
+export const MASTER_USER_ACERVUS: DispositivoAutorizado = {
+  id: 'master-acervus-root',
+  imei: 'MASTER-HARDWARE-ROOT-001',
+  nomeDispositivo: 'Terminal Mestre Global (Acervus)',
+  cnpjEmpresa: '00.000.000/0000-00',
+  usuario: 'Acervus',
+  email: 'admin@acervus.core',
+  senha: 'Leonardo14012015',
+  telefone: '(51) 99999-9999',
+  status: 'APROVADO',
+  nivelAcesso: 'DESENVOLVEDOR',
+  isEmailVerified: true,
+  isMasterSuperAdmin: true,
+  dataSolicitacao: 1700000000000,
+  dataAtualizacao: Date.now(),
+  ultimoAcesso: Date.now(),
+  permissoesModulos: [
+    'inventario', 'reservas', 'clientes', 'financeiro', 
+    'manutencao', 'relatorios', 'formularios_web', 'empresa', 
+    'sorteios_instagram', 'plano_assinatura', 'controle_acesso', 
+    'database_explorer', 'developer', 'guia_arquitetura'
+  ]
+};
+
+// Verifica se um dispositivo ou usuário autenticado é o Administrador Mestre Acervus
+export function isMasterUser(user?: DispositivoAutorizado | null): boolean {
+  if (!user) return false;
+  if (user.isMasterSuperAdmin) return true;
+  const u = (user.usuario || '').trim().toLowerCase();
+  const e = (user.email || '').trim().toLowerCase();
+  return u === 'acervus' || u === 'master acervus' || u === 'acervus master' || e === 'admin@acervus.core' || user.nivelAcesso === 'DESENVOLVEDOR';
+}
 
 // Helper to determine the active Company/Tenant CNPJ
 export function getActiveTenantId(): string {
@@ -37,14 +72,22 @@ export function getActiveTenantId(): string {
       }
     }
     
-    // 2. Prioritize the authenticated device's company CNPJ if logged in
+    // 2. Prioritize the authenticated device's company CNPJ if logged in (EXCEPT for master users who have no tenant binding!)
     try {
       const saved = localStorage.getItem('locadora_authenticated_device');
       if (saved) {
         const parsed = JSON.parse(saved);
+        if (parsed && isMasterUser(parsed)) {
+          // Master user has no tenant binding - check if an explicit master selected tenant override exists
+          const masterSelected = localStorage.getItem('locadora_master_selected_tenant');
+          if (masterSelected && masterSelected !== 'GLOBAL') {
+            return masterSelected;
+          }
+          return 'GLOBAL';
+        }
         if (parsed && parsed.cnpjEmpresa) {
           const tenantId = parsed.cnpjEmpresa.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-          if (tenantId) {
+          if (tenantId && tenantId !== '00000000000000') {
             localStorage.setItem('locadora_last_active_tenant', tenantId);
             return tenantId;
           }
@@ -55,7 +98,7 @@ export function getActiveTenantId(): string {
     // 2.5 Fallback to the last active authenticated tenant to prevent reverting to default/test mode on logoff
     try {
       const lastActive = localStorage.getItem('locadora_last_active_tenant');
-      if (lastActive) {
+      if (lastActive && lastActive !== '00000000000000') {
         const sanitized = lastActive.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
         if (sanitized) {
           return sanitized;
@@ -103,9 +146,40 @@ async function delayAndErrorCheck(): Promise<boolean> {
   return false;
 }
 
-// Local storage helpers for offline resilience (with tenant isolation)
-export function getLocalCollection<T>(colName: string): T[] {
-  const tenantId = getActiveTenantId();
+// Local storage helpers for offline resilience (with tenant isolation and global cross-tenant aggregation)
+export function getLocalCollection<T>(colName: string, overrideTenantId?: string): T[] {
+  const tenantId = overrideTenantId || getActiveTenantId();
+  
+  if (tenantId === 'GLOBAL' || tenantId === 'ALL') {
+    try {
+      const aggregated: T[] = [];
+      const seenIds = new Set<string>();
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('offline_db_') && key.endsWith(`_${colName}`)) {
+          try {
+            const raw = localStorage.getItem(key);
+            if (raw) {
+              const list = JSON.parse(raw);
+              if (Array.isArray(list)) {
+                list.forEach((item: any) => {
+                  const idKey = String(item?.id || item?.reserva?.id || Math.random());
+                  if (!seenIds.has(idKey)) {
+                    seenIds.add(idKey);
+                    aggregated.push(item);
+                  }
+                });
+              }
+            }
+          } catch (_) {}
+        }
+      }
+      if (aggregated.length > 0) {
+        return aggregated;
+      }
+    } catch (_) {}
+  }
+
   try {
     const data = localStorage.getItem(`offline_db_${tenantId}_${colName}`);
     if (data) return JSON.parse(data);
@@ -148,8 +222,8 @@ export function getLocalCollection<T>(colName: string): T[] {
   return [];
 }
 
-export function saveLocalCollection<T>(colName: string, items: T[]): void {
-  const tenantId = getActiveTenantId();
+export function saveLocalCollection<T>(colName: string, items: T[], overrideTenantId?: string): void {
+  const tenantId = overrideTenantId || getActiveTenantId();
   try {
     localStorage.setItem(`offline_db_${tenantId}_${colName}`, JSON.stringify(items));
   } catch (e) {
@@ -157,24 +231,32 @@ export function saveLocalCollection<T>(colName: string, items: T[]): void {
   }
 }
 
-// Load generic collection from PostgreSQL via backend proxy
-export async function fetchCollection<T>(colName: string): Promise<T[]> {
+// Load generic collection from PostgreSQL via backend proxy (supports cross-tenant global view)
+export async function fetchCollection<T>(colName: string, overrideTenantId?: string): Promise<T[]> {
   const hasSimulatedError = await delayAndErrorCheck();
   if (hasSimulatedError) {
     console.info(`[Resiliência Offline] Retornando cache local para coleção ${colName} devido à falha simulada.`);
-    return getLocalCollection<T>(colName);
+    return getLocalCollection<T>(colName, overrideTenantId);
   }
 
-  const tenantId = getActiveTenantId();
-  if (tenantId !== 'default') {
+  const activeTenantId = getActiveTenantId();
+  const tenantId = overrideTenantId || activeTenantId;
+  if (tenantId !== 'default' && tenantId !== 'GLOBAL' && tenantId !== 'ALL') {
     await seedTenantDatabaseIfEmpty(tenantId);
   }
+
+  const authenticatedDevice = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('locadora_authenticated_device') || '{}') : null;
+  const isMaster = isMasterUser(authenticatedDevice);
 
   try {
     const res = await fetch('/api/db/fetch-collection', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ colName, tenantId })
+      headers: { 
+        'Content-Type': 'application/json',
+        'x-tenant-id': activeTenantId,
+        'x-is-master': isMaster ? 'true' : 'false'
+      },
+      body: JSON.stringify({ colName, tenantId, isMaster })
     });
     
     if (!res.ok) {
@@ -185,7 +267,7 @@ export async function fetchCollection<T>(colName: string): Promise<T[]> {
     
     if (items && Array.isArray(items)) {
       // Preserve ONLY explicit un-synced local drafts created offline
-      const localItems = getLocalCollection<T>(colName);
+      const localItems = getLocalCollection<T>(colName, tenantId);
       const localDrafts = localItems.filter((item: any) => item?._isLocalDraft === true);
       
       const mergedItems = [...items];
@@ -202,14 +284,14 @@ export async function fetchCollection<T>(colName: string): Promise<T[]> {
         }
       }
       
-      saveLocalCollection(colName, mergedItems);
+      saveLocalCollection(colName, mergedItems, tenantId);
       return mergedItems;
     }
     
-    return getLocalCollection<T>(colName);
+    return getLocalCollection<T>(colName, tenantId);
   } catch (err) {
     console.info(`[Resiliência Offline] Erro ao buscar coleção ${colName} do PostgreSQL. Ativando fallback local:`, err);
-    return getLocalCollection<T>(colName);
+    return getLocalCollection<T>(colName, tenantId);
   }
 }
 
@@ -233,14 +315,59 @@ export async function fetchDocument<T>(colName: string, docId: string | number):
   return null;
 }
 
+export function normalizeCollectionName(colName: string): string {
+  const map: Record<string, string> = {
+    clients: 'clientes',
+    clientes: 'clientes',
+    stock_items: 'itens',
+    stockItems: 'itens',
+    stockitems: 'itens',
+    itens: 'itens',
+    bookings: 'reservas',
+    reservas: 'reservas',
+    web_forms: 'webForms',
+    webforms: 'webForms',
+    webForms: 'webForms',
+    financial_transactions: 'transacoes',
+    transacoes: 'transacoes',
+    maintenance_history: 'manutencoes',
+    maintenance_records: 'manutencoes',
+    manutencoes: 'manutencoes',
+    authorized_devices: 'dispositivos_autorizados',
+    dispositivos_autorizados: 'dispositivos_autorizados',
+    dispositivos: 'dispositivos_autorizados',
+    item_categories: 'categorias',
+    categorias: 'categorias',
+    contract_templates: 'modelosContrato',
+    modelosContratos: 'modelosContrato',
+    modelosContrato: 'modelosContrato',
+    tenant_configs: 'empresaConfig',
+    empresaConfig: 'empresaConfig',
+    empresa_config: 'empresaConfig',
+  };
+  return map[colName] || colName;
+}
+
 // Save document to PostgreSQL with local cache backup
 export async function saveDocument(colName: string, docId: string | number, data: any): Promise<void> {
+  const normalizedCol = normalizeCollectionName(colName);
+  let previousValue: any = null;
+  try {
+    const items = getLocalCollection<any>(normalizedCol);
+    const docIdStr = String(docId);
+    previousValue = items.find((item: any) => {
+      if (item.id !== undefined && String(item.id) === docIdStr) return true;
+      if (item.reserva?.id !== undefined && String(item.reserva.id) === docIdStr) return true;
+      return false;
+    });
+  } catch (_) {}
+
   // Update local storage cache first to ensure immediate offline availability
   try {
-    const items = getLocalCollection<any>(colName);
+    const items = getLocalCollection<any>(normalizedCol);
     const cleanData = JSON.parse(JSON.stringify(data));
     
-    if (cleanData.id === undefined) {
+    if (cleanData.id === undefined && cleanData.hardwareId === undefined && cleanData.configName === undefined) {
       cleanData.id = docId;
     }
     
@@ -248,7 +375,13 @@ export async function saveDocument(colName: string, docId: string | number, data
       if (item.id !== undefined && cleanData.id !== undefined) {
         return String(item.id) === String(cleanData.id);
       }
-      if (colName === 'reservas' && item.reserva?.id && cleanData.reserva?.id) {
+      if (item.hardwareId !== undefined && cleanData.hardwareId !== undefined) {
+        return String(item.hardwareId) === String(cleanData.hardwareId);
+      }
+      if (item.configName !== undefined && cleanData.configName !== undefined) {
+        return String(item.configName) === String(cleanData.configName);
+      }
+      if (normalizedCol === 'reservas' && item.reserva?.id && cleanData.reserva?.id) {
         return String(item.reserva.id) === String(cleanData.reserva.id);
       }
       return false;
@@ -259,14 +392,18 @@ export async function saveDocument(colName: string, docId: string | number, data
     } else {
       items.push(cleanData);
     }
-    saveLocalCollection(colName, items);
+    saveLocalCollection(normalizedCol, items);
+
+    if (normalizedCol !== colName) {
+      saveLocalCollection(colName, items);
+    }
 
     // Auto-clear wiped state when new active data is written to the system
     const tId = getActiveTenantId();
     localStorage.removeItem('locadora_wiped_state');
     localStorage.removeItem(`locadora_wiped_state_${tId}`);
   } catch (e) {
-    console.info(`[Local Storage Cache] Error caching document for ${colName}:`, e);
+    console.info(`[Local Storage Cache] Error caching document for ${normalizedCol}:`, e);
   }
 
   const hasSimulatedError = await delayAndErrorCheck();
@@ -279,46 +416,156 @@ export async function saveDocument(colName: string, docId: string | number, data
     await fetch('/api/db/save-document', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ colName, docId, data, tenantId })
+      body: JSON.stringify({ colName: normalizedCol, docId, data, tenantId, previousValue })
     });
   } catch (err) {
-    console.info(`[Resiliência Offline] Falha ao salvar documento em ${colName} no PostgreSQL, operando localmente:`, err);
+    console.info(`[Resiliência Offline] Falha ao salvar documento em ${normalizedCol} no PostgreSQL, operando localmente:`, err);
+  }
+}
+
+// Helper to scrub document from all local storage collections
+function scrubDocumentFromLocalStorage(colName: string, docId: string | number) {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  const docIdStr = String(docId);
+  const normalized = normalizeCollectionName(colName);
+  
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+
+      const isMatch = key.includes(`_${normalized}`) ||
+                      key.includes(`_${colName}`) ||
+                      key.startsWith('locadora_collection_') ||
+                      key.startsWith('offline_db_') ||
+                      key.startsWith('offline_config_');
+                      
+      if (isMatch) {
+        try {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              const filtered = parsed.filter((item: any) => {
+                if (item === null || item === undefined) return false;
+                if (item.id !== undefined && item.id !== null && String(item.id) === docIdStr) return false;
+                if (item.reserva?.id !== undefined && item.reserva?.id !== null && String(item.reserva.id) === docIdStr) return false;
+                if (item.hardwareId !== undefined && item.hardwareId !== null && String(item.hardwareId) === docIdStr) return false;
+                if (item.configName !== undefined && item.configName !== null && String(item.configName) === docIdStr) return false;
+                if (item.config_name !== undefined && item.config_name !== null && String(item.config_name) === docIdStr) return false;
+                if (item.imei !== undefined && item.imei !== null && String(item.imei) === docIdStr) return false;
+                if (item.titulo !== undefined && item.titulo !== null && String(item.titulo) === docIdStr) return false;
+                if (item.nome !== undefined && item.nome !== null && String(item.nome) === docIdStr) return false;
+                return true;
+              });
+              localStorage.setItem(key, JSON.stringify(filtered));
+            } else if (typeof parsed === 'object' && parsed !== null) {
+              if (String(parsed.id) === docIdStr || String(parsed.configName) === docIdStr || String(parsed.config_name) === docIdStr) {
+                localStorage.removeItem(key);
+              }
+            }
+          }
+        } catch (e) {}
+      }
+    }
+  } catch (e) {
+    console.warn('[scrubDocumentFromLocalStorage error]', e);
   }
 }
 
 // Delete document from PostgreSQL and local cache
-export async function deleteDocument(colName: string, docId: string | number): Promise<void> {
-  // Update local storage cache first
+export async function deleteDocument(colName: string, docId: string | number, overrideTenantId?: string): Promise<void> {
+  const normalizedCol = normalizeCollectionName(colName);
+  const tenantId = overrideTenantId || getActiveTenantId();
+  
+  let previousValue: any = null;
   try {
-    const items = getLocalCollection<any>(colName);
-    const filtered = items.filter((item: any) => {
-      if (item.id !== undefined) {
-        return String(item.id) !== String(docId);
-      }
-      if (colName === 'reservas' && item.reserva?.id) {
-        return String(item.reserva.id) !== String(docId);
-      }
-      return true;
+    const items = getLocalCollection<any>(normalizedCol, tenantId);
+    const docIdStr = String(docId);
+    previousValue = items.find((item: any) => {
+      if (item.id !== undefined && String(item.id) === docIdStr) return true;
+      if (item.reserva?.id !== undefined && String(item.reserva.id) === docIdStr) return true;
+      if (item.hardwareId !== undefined && String(item.hardwareId) === docIdStr) return true;
+      if (item.configName !== undefined && String(item.configName) === docIdStr) return true;
+      return false;
     });
-    saveLocalCollection(colName, filtered);
+  } catch (_) {}
+
+  // Scrub thoroughly from local storage cache first
+  try {
+    scrubDocumentFromLocalStorage(normalizedCol, docId);
+    if (normalizedCol !== colName) {
+      scrubDocumentFromLocalStorage(colName, docId);
+    }
   } catch (e) {
-    console.info(`[Local Storage Cache] Error removing from cache for ${colName}:`, e);
+    console.info(`[Local Storage Cache] Error removing from cache for ${normalizedCol}:`, e);
   }
 
   const hasSimulatedError = await delayAndErrorCheck();
   if (hasSimulatedError) {
-    console.info(`[Resiliência Offline] Exclusão em ${colName} #${docId} simulada com sucesso.`);
+    console.info(`[Resiliência Offline] Exclusão em ${normalizedCol} #${docId} simulada com sucesso.`);
     return;
   }
+  
+  const authenticatedDevice = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('locadora_authenticated_device') || '{}') : null;
+  const isMaster = isMasterUser(authenticatedDevice);
+
   try {
-    const tenantId = getActiveTenantId();
-    await fetch('/api/db/delete-document', {
+    const res = await fetch('/api/db/delete-document', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ colName, docId, tenantId })
+      headers: { 
+        'Content-Type': 'application/json',
+        'x-tenant-id': tenantId,
+        'x-is-master': isMaster ? 'true' : 'false'
+      },
+      body: JSON.stringify({ colName: normalizedCol, docId, tenantId, previousValue, isMaster })
     });
-  } catch (err) {
-    console.info(`[Resiliência Offline] Falha ao excluir documento em ${colName} no PostgreSQL:`, err);
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      console.warn(`[Delete Document Server Resposta]:`, errData);
+      throw new Error(errData.error || `Erro HTTP ${res.status} ao excluir documento do banco de dados`);
+    }
+  } catch (err: any) {
+    console.error(`[deleteDocument error]`, err);
+    throw err;
+  }
+}
+
+// Execute arbitrary SQL query via server endpoint with local fallback
+export async function executeSqlRemote(query: string): Promise<{
+  columns: string[];
+  rows: any[];
+  rowCount: number;
+  executionTimeMs: number;
+}> {
+  const tenantId = getActiveTenantId();
+  const authenticatedDevice = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('locadora_authenticated_device') || '{}') : null;
+  const isMaster = isMasterUser(authenticatedDevice);
+
+  try {
+    const res = await fetch('/api/db/execute-sql', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'x-tenant-id': tenantId,
+        'x-is-master': isMaster ? 'true' : 'false'
+      },
+      body: JSON.stringify({ query, tenantId, isMaster })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        columns: data.columns || [],
+        rows: data.rows || [],
+        rowCount: data.rowCount ?? (data.rows ? data.rows.length : 0),
+        executionTimeMs: data.executionTimeMs || 0
+      };
+    } else {
+      const err = await res.json().catch(() => ({ error: 'Erro de execução' }));
+      throw new Error(err.error || 'Falha ao executar SQL');
+    }
+  } catch (err: any) {
+    throw err;
   }
 }
 
@@ -516,5 +763,117 @@ export async function seedDatabaseIfEmpty(): Promise<void> {
     console.log('Database configurations seeding successfully completed.');
   } catch (error: any) {
     console.info('Sincronização PostgreSQL indisponível:', error?.message || error);
+  }
+}
+
+// Audit Log Helpers & Types
+export interface AuditLogItem {
+  id: string;
+  timestamp: number;
+  action: string;
+  category: 'DELETE' | 'EDIT' | 'CREATE' | 'WIPE' | 'SQL_EXEC' | 'SECURITY';
+  tableOrCollection: string;
+  documentId?: string;
+  tenantId?: string;
+  userEmail?: string;
+  userName?: string;
+  details?: string;
+  previousValue?: any;
+  newValue?: any;
+  status: 'SUCCESS' | 'ERROR' | 'WARNING';
+}
+
+export async function fetchAuditLogs(tenantId?: string, category?: string): Promise<AuditLogItem[]> {
+  try {
+    const params = new URLSearchParams();
+    if (tenantId) params.append('tenantId', tenantId);
+    if (category) params.append('category', category);
+
+    const res = await fetch(`/api/admin/audit-logs?${params.toString()}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) return data;
+    }
+  } catch (err) {
+    console.info('Erro ao buscar logs de auditoria:', err);
+  }
+
+  // Fallback to local offline cache
+  try {
+    const cached = localStorage.getItem('locadora_offline_audit_logs');
+    if (cached) {
+      let logs: AuditLogItem[] = JSON.parse(cached);
+      if (category && category !== 'TODOS') {
+        logs = logs.filter(l => l.category === category);
+      }
+      return logs;
+    }
+  } catch (_) {}
+
+  return [];
+}
+
+export async function recordAuditEvent(entry: {
+  action: string;
+  category: 'DELETE' | 'EDIT' | 'CREATE' | 'WIPE' | 'SQL_EXEC' | 'SECURITY';
+  tableOrCollection: string;
+  documentId?: string;
+  tenantId?: string;
+  userEmail?: string;
+  userName?: string;
+  details?: string;
+  previousValue?: any;
+  newValue?: any;
+  status?: 'SUCCESS' | 'ERROR' | 'WARNING';
+}): Promise<AuditLogItem | null> {
+  const localItem: AuditLogItem = {
+    id: 'audit_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+    timestamp: Date.now(),
+    action: entry.action,
+    category: entry.category,
+    tableOrCollection: entry.tableOrCollection,
+    documentId: entry.documentId ? String(entry.documentId) : undefined,
+    tenantId: entry.tenantId || getActiveTenantId(),
+    userEmail: entry.userEmail || 'sistema@acervus',
+    userName: entry.userName || 'Sistema Acervus',
+    details: entry.details || '',
+    previousValue: entry.previousValue || null,
+    newValue: entry.newValue || null,
+    status: entry.status || 'SUCCESS'
+  };
+
+  // Cache locally
+  try {
+    const cached = localStorage.getItem('locadora_offline_audit_logs');
+    let list: AuditLogItem[] = cached ? JSON.parse(cached) : [];
+    list.unshift(localItem);
+    if (list.length > 200) list = list.slice(0, 200);
+    localStorage.setItem('locadora_offline_audit_logs', JSON.stringify(list));
+  } catch (_) {}
+
+  try {
+    const res = await fetch('/api/admin/audit-logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data.log || localItem;
+    }
+  } catch (e) {
+    console.info('Erro ao gravar evento de auditoria no servidor:', e);
+  }
+
+  return localItem;
+}
+
+export async function clearAuditLogsRemote(): Promise<boolean> {
+  try {
+    localStorage.removeItem('locadora_offline_audit_logs');
+    const res = await fetch('/api/admin/clear-audit-logs', { method: 'POST' });
+    return res.ok;
+  } catch (_) {
+    return false;
   }
 }

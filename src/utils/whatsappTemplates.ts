@@ -104,13 +104,13 @@ export function processarTemplateWhatsApp(
     .map((i) => `• ${i.nome}`)
     .join('\n');
 
-  const nomeEmpresa = empresaConfig?.nomeFantasia || 'Bora Festar Locações';
-  const razaoSocial = empresaConfig?.razaoSocial || 'Bora Festar Eventos e Festas LTDA';
-  const cnpjEmpresa = empresaConfig?.cnpj || '45.678.910/0001-23';
-  const enderecoEmpresa = empresaConfig?.enderecoCompleto || 'Rua das Festas, 500 - Centro, São Paulo - SP';
-  const mapaEmpresa = empresaConfig?.linkMapaLocalizacao || 'https://maps.google.com/?q=Rua+das+Festas,+500+-+Centro,+São+Paulo+-+SP';
-  const telefoneEmpresa = empresaConfig?.telefoneWhatsapp || '5511999998888';
-  const representanteEmpresa = empresaConfig?.nomeRepresentante || 'Juliana Medeiros';
+  const nomeEmpresa = empresaConfig?.nomeFantasia || 'Minha Locadora';
+  const razaoSocial = empresaConfig?.razaoSocial || empresaConfig?.nomeFantasia || 'Locadora de Acervos';
+  const cnpjEmpresa = empresaConfig?.cnpj || '';
+  const enderecoEmpresa = empresaConfig?.enderecoCompleto || '';
+  const mapaEmpresa = empresaConfig?.linkMapaLocalizacao || '';
+  const telefoneEmpresa = empresaConfig?.telefoneWhatsapp || '';
+  const representanteEmpresa = empresaConfig?.nomeRepresentante || 'Gestor Responsável';
 
   return template
     .replace(/\{cliente_nome\}/g, cliente.nome || 'Cliente')

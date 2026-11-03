@@ -16,7 +16,7 @@ import {
   ChevronRight,
   Sparkles
 } from 'lucide-react';
-import { TransacaoFinanceira, ReservaComItens, StatusReserva } from '../types';
+import { TransacaoFinanceira, ReservaComItens, StatusReserva, EmpresaConfig } from '../types';
 import { printElementById } from '../utils/printUtils';
 import { StandardListControls, StandardPagination, StandardEmptyState } from './StandardListContainer';
 import { formatCurrencyBRL, parseCurrencyBRLToNumber } from '../utils/currencyMask';
@@ -40,6 +40,7 @@ interface FinanceiroViewProps {
   onUpdateTransacaoStatus: (id: string, status: 'PAGO' | 'PENDENTE') => void;
   onDeleteTransacao: (id: string) => void;
   reservas: ReservaComItens[];
+  empresaConfig?: EmpresaConfig;
 }
 
 export const FinanceiroView: React.FC<FinanceiroViewProps> = ({
@@ -48,6 +49,7 @@ export const FinanceiroView: React.FC<FinanceiroViewProps> = ({
   onUpdateTransacaoStatus,
   onDeleteTransacao,
   reservas,
+  empresaConfig,
 }) => {
   // Filter States
   const [searchTerm, setSearchTerm] = useState('');
@@ -762,9 +764,9 @@ export const FinanceiroView: React.FC<FinanceiroViewProps> = ({
             {/* Header Report */}
             <div className="flex justify-between border-b-2 border-slate-950 pb-4">
               <div>
-                <h3 className="font-serif italic font-bold text-lg text-amber-800">Locadora Pro</h3>
-                <p className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">Bora Festar Locações LTDA • CNPJ: 45.678.910/0001-23</p>
-                <p className="text-[10px] text-slate-600">Rua das Festas, 500 - Centro, São Paulo - SP</p>
+                <h3 className="font-serif italic font-bold text-lg text-amber-800">{empresaConfig?.nomeFantasia || 'Minha Locadora'}</h3>
+                <p className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">{empresaConfig?.razaoSocial || empresaConfig?.nomeFantasia || 'Locadora de Acervos'} {empresaConfig?.cnpj ? `• CNPJ: ${empresaConfig.cnpj}` : ''}</p>
+                <p className="text-[10px] text-slate-600">{empresaConfig?.enderecoCompleto || ''}</p>
               </div>
               <div className="text-right text-xs">
                 <div className="font-bold text-slate-800">RELATÓRIO OPERACIONAL FINANCEIRO</div>

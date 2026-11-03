@@ -27,13 +27,15 @@ import {
   Send,
   KeyRound,
   Eye,
-  EyeOff
+  EyeOff,
+  RefreshCw,
+  ExternalLink
 } from 'lucide-react';
 import { DispositivoAutorizado, EmpresaConfig } from '../types';
-import { saveDocument, saveConfig } from '../lib/firebaseSync';
+import { saveDocument, saveConfig, getConfig } from '../lib/firebaseSync';
+import { SYSTEM_VERSION } from '../config/version';
 import { PhoneInput } from './PhoneInput';
 import { INITIAL_EMPRESA_CONFIG } from '../data/initialData';
-
 interface LockScreenProps {
   empresaConfig: EmpresaConfig;
   onAuthenticated: (device: DispositivoAutorizado, isNewClient?: boolean) => void;
@@ -65,6 +67,9 @@ export const LockScreen: React.FC<LockScreenProps> = ({
   const [showSeedModal, setShowSeedModal] = useState(false);
   const [inputSeed, setInputSeed] = useState('');
   const [seedError, setSeedError] = useState<string | null>(null);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [emailSendStatus, setEmailSendStatus] = useState<string | null>(null);
+  const [emailPreviewUrl, setEmailPreviewUrl] = useState<string | null>(null);
   const [seedModalData, setSeedModalData] = useState<{
     email: string;
     expectedSeed: string;
@@ -111,20 +116,12 @@ export const LockScreen: React.FC<LockScreenProps> = ({
       setShowManualForm(true);
     }
 
-    // Auto-fill defaults conditionally (leave empty for real user entry)
-    if (formMode === 'REGISTER') {
-      setCnpj('');
-      setUsuario('');
-      setEmail('');
-      setTelefone('');
-      setSenha('');
-    } else {
-      setCnpj('');
-      setUsuario('');
-      setEmail('');
-      setTelefone('');
-      setSenha('');
-    }
+    // Clear form fields when switching mode to ensure no pre-filled company data for new registrations
+    setCnpj('');
+    setUsuario('');
+    setEmail('');
+    setTelefone('');
+    setSenha('');
     
     // Auto-detect device name guess
     const userAgent = navigator.userAgent;
@@ -134,7 +131,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
     else if (userAgent.includes('Windows')) nameGuess = 'Windows PC';
     else if (userAgent.includes('Linux')) nameGuess = 'Linux Workstation';
     setNomeDispositivo(nameGuess);
-  }, [empresaConfig, dispositivos, formMode]);
+  }, [formMode]);
 
   // Check if current device is already registered and approved in the database
   const matchedDevice = dispositivos.find(d => d.id === deviceUuid);
@@ -143,23 +140,20 @@ export const LockScreen: React.FC<LockScreenProps> = ({
   // Whenever isRegisteredApproved is true, also treat as biometrics available
   const isBiometricActiveAndAvailable = hasBiometricRegistered || isRegisteredApproved;
 
-  // 2. Dynamic Phone Detection Trigger
+  // 2. Dynamic Phone Detection Trigger (Simulate carrier check without overwriting user input)
   useEffect(() => {
     if (formMode === 'REGISTER') {
       setIsDetectingPhone(true);
       setPhoneDetected(false);
       
       const timer = setTimeout(() => {
-        // Automatically fetch and populate carrier phone number
-        const autoPhone = empresaConfig.telefoneWhatsapp || '5511999998888';
-        setTelefone(autoPhone);
         setIsDetectingPhone(false);
         setPhoneDetected(true);
-      }, 1500); // 1.5 second elegant native simulation
+      }, 1000);
 
       return () => clearTimeout(timer);
     }
-  }, [formMode, empresaConfig]);
+  }, [formMode]);
 
   const handleCopyUuid = () => {
     navigator.clipboard.writeText(deviceUuid);
@@ -169,10 +163,69 @@ export const LockScreen: React.FC<LockScreenProps> = ({
 
   const cleanString = (str: string) => str.replace(/\D/g, '');
 
+  const sendEmailNotification = async (targetEmail: string, seed: string, targetUser: string) => {
+    setIsSendingEmail(true);
+    setEmailSendStatus('Despachando e-mail de confirmação via servidor de e-mails...');
+    setEmailPreviewUrl(null);
+
+    try {
+      const resp = await fetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: targetEmail,
+          subject: 'Acervus Core - Semente de Confirmação de Acesso',
+          seedCode: seed,
+          usuario: targetUser || 'Representante Legal',
+          empresaNome: empresaConfig?.nomeFantasia || 'Acervus Core',
+        }),
+      });
+
+      const data = await resp.json();
+      if (data.success) {
+        setEmailSendStatus(data.message || `E-mail de confirmação despachado para ${targetEmail}!`);
+        if (data.previewUrl) {
+          setEmailPreviewUrl(data.previewUrl);
+        }
+      } else {
+        setEmailSendStatus(`Não foi possível despachar o e-mail: ${data.error || 'Verifique o e-mail digitado'}.`);
+      }
+    } catch (err) {
+      console.warn('Erro ao chamar endpoint /api/send-email:', err);
+      setEmailSendStatus('Aviso: Verifique a caixa de entrada e a pasta de SPAM do e-mail cadastrado para obter seu código.');
+    } finally {
+      setIsSendingEmail(false);
+    }
+  };
+
   const executeRegistrationProcess = async () => {
     if (!email.trim() || !email.includes('@')) {
       setError('Por favor, informe um e-mail corporativo válido para o cadastro.');
       return;
+    }
+
+    const cleanCnpj = cnpj.trim().replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    let existingConfig: EmpresaConfig | null = null;
+    if (cleanCnpj) {
+      try {
+        const res = await fetch('/api/db/get-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            configName: 'empresaConfig',
+            tenantId: cleanCnpj,
+            defaultValue: null
+          })
+        });
+        if (res.ok) {
+          const loaded = await res.json();
+          if (loaded && loaded.cnpj && loaded.cnpj.trim().replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanCnpj) {
+            existingConfig = loaded;
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao verificar empresa existente no banco remoto:', err);
+      }
     }
 
     const generatedSeed = 'SEED-' + Math.floor(100000 + Math.random() * 900000);
@@ -181,7 +234,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
       id: deviceUuid,
       imei: deviceUuid,
       nomeDispositivo: nomeDispositivo.trim() || 'Dispositivo do Novo Cliente',
-      cnpjEmpresa: cnpj.trim() || empresaConfig.cnpj || '45.678.910/0001-23',
+      cnpjEmpresa: cnpj.trim() || '',
       usuario: usuario.trim() || 'Representante Legal',
       email: email.trim(),
       senha: senha.trim() || '123456',
@@ -194,7 +247,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
       ultimoAcesso: Date.now(),
     };
 
-    const newEmpresaConfig: EmpresaConfig = {
+    const newEmpresaConfig: EmpresaConfig = existingConfig || {
       ...INITIAL_EMPRESA_CONFIG,
       cnpj: cnpj.trim(),
       nomeRepresentante: usuario.trim() || 'Representante Legal',
@@ -214,7 +267,10 @@ export const LockScreen: React.FC<LockScreenProps> = ({
 
     try {
       await saveDocument('dispositivos_autorizados', deviceUuid, approvedDev);
-      await saveConfig('empresaConfig', newEmpresaConfig);
+      if (!existingConfig) {
+        await saveConfig('empresaConfig', newEmpresaConfig);
+      }
+      await onRefreshDispositivos();
     } catch (saveErr) {
       console.warn('Erro ao sincronizar novo cliente com o banco remoto (utilizando cache local):', saveErr);
     }
@@ -228,10 +284,13 @@ export const LockScreen: React.FC<LockScreenProps> = ({
       email: email.trim(),
       expectedSeed: generatedSeed,
       dev: approvedDev,
-      isNewClient: true
+      isNewClient: !existingConfig
     });
     setShowSeedModal(true);
-    setSuccessMsg(`Semente de confirmação gerada (${generatedSeed}) e enviada para ${email.trim()}.`);
+    setSuccessMsg('Cadastro processado com sucesso! Semente de confirmação despachada para o e-mail cadastrado.');
+
+    // Enviar e-mail real via endpoint backend /api/send-email
+    sendEmailNotification(email.trim(), generatedSeed, usuario.trim() || 'Representante Legal');
   };
 
   const handleVerifySeed = async () => {
@@ -255,7 +314,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
 
     try {
       await saveDocument('dispositivos_autorizados', verifiedDev.id, verifiedDev);
-      if (empresaConfig) {
+      if (seedModalData.isNewClient && empresaConfig) {
         await saveConfig('empresaConfig', {
           ...empresaConfig,
           isEmailVerified: true
@@ -287,35 +346,113 @@ export const LockScreen: React.FC<LockScreenProps> = ({
       const inputUser = usuario.trim().toLowerCase();
       const trimmedSenha = senha.trim();
 
-      const activeCnpj = (empresaConfig.cnpj || '').replace(/\D/g, '');
+      // 0. Reconhecimento Prioritário do Usuário Mestre Oficial: Acervus
+      const isMasterLogin = 
+        inputUser === 'acervus' || 
+        inputUser === 'master' || 
+        inputUser === 'master acervus' || 
+        inputUser === 'acervus master';
 
-      // 1. Filtrar operadores e dispositivos APROVADOS vinculados a esta empresa (CNPJ)
-      const allowedUsersForTenant = dispositivos.filter(d => {
-        const devCnpj = (d.cnpjEmpresa || '').replace(/\D/g, '');
-        return devCnpj === activeCnpj && d.status === 'APROVADO';
-      });
+      if (isMasterLogin) {
+        // Validação da Senha Mestre de Acesso
+        const MASTER_PASSWORD = 'Leonardo14012015';
+        if (trimmedSenha !== MASTER_PASSWORD) {
+          setError('Senha incorreta para o Usuário Mestre. Verifique as credenciais de acesso total.');
+          setLoading(false);
+          return;
+        }
 
-      // 2. Procurar operador cadastrado correspondente
-      const userMatch = allowedUsersForTenant.find(d => 
-        (d.usuario && d.usuario.trim().toLowerCase() === inputUser) ||
-        (d.email && d.email.trim().toLowerCase() === inputUser)
+        const masterAuthDev: DispositivoAutorizado = {
+          id: deviceUuid || 'master-acervus-root',
+          imei: deviceUuid || 'MASTER-HARDWARE-ROOT-001',
+          nomeDispositivo: 'Terminal Mestre Global (Acervus)',
+          cnpjEmpresa: empresaConfig.cnpj || '00.000.000/0000-00',
+          usuario: 'Acervus',
+          email: 'admin@acervus.core',
+          senha: MASTER_PASSWORD,
+          telefone: telefone.trim() || empresaConfig.telefoneWhatsapp || '(51) 99999-9999',
+          status: 'APROVADO',
+          nivelAcesso: 'DESENVOLVEDOR',
+          isEmailVerified: true,
+          isMasterSuperAdmin: true,
+          dataSolicitacao: 1700000000000,
+          dataAtualizacao: Date.now(),
+          ultimoAcesso: Date.now(),
+          permissoesModulos: [
+            'inventario', 'reservas', 'clientes', 'financeiro', 
+            'manutencao', 'relatorios', 'formularios_web', 'empresa', 
+            'sorteios_instagram', 'plano_assinatura', 'controle_acesso', 
+            'database_explorer', 'developer', 'guia_arquitetura'
+          ]
+        };
+
+        try {
+          await saveDocument('dispositivos_autorizados', masterAuthDev.id, masterAuthDev);
+        } catch (saveErr) {}
+
+        setSuccessMsg('Acesso Mestre Concedido! Bem-vindo, Acervus (Gestão Plena Global e Cross-Tenant).');
+        setTimeout(() => {
+          onAuthenticated(masterAuthDev, false);
+        }, 300);
+        return;
+      }
+
+      // 1. Procurar operador cadastrado entre TODOS os dispositivos APROVADOS (sem restringir por activeCnpj inicial)
+      let userMatch = dispositivos.find(d => 
+        d.status === 'APROVADO' && (
+          (d.usuario && d.usuario.trim().toLowerCase() === inputUser) ||
+          (d.email && d.email.trim().toLowerCase() === inputUser)
+        )
       );
 
-      // 3. Verificar se corresponde à conta Master/Administradora da empresa
+      // 2. Verificar se corresponde à conta Master/Administradora da empresa em memória
       const masterUser = (empresaConfig.nomeRepresentante || 'Administrador').trim().toLowerCase();
       const masterEmail = (empresaConfig.email || '').trim().toLowerCase();
-      const masterSenha = empresaConfig.senhaAcesso || '123456';
-      const isMasterMatch = (inputUser === masterUser || inputUser === masterEmail || inputUser === 'admin');
+      const activeCnpjClean = (empresaConfig.cnpj || '').replace(/\D/g, '');
+      const isMasterMatch = (inputUser === masterUser || inputUser === masterEmail || (activeCnpjClean && inputUser === activeCnpjClean.toLowerCase()) || inputUser === 'admin');
 
-      // 4. Bloquear se não for usuário válido nem Master
+      // 3. Se não encontrou no estado em memória, buscar nas empresas salvas no localStorage (cache por tenant)
+      let matchedTenantConfig: EmpresaConfig | null = null;
       if (!userMatch && !isMasterMatch) {
-        setError('Acesso negado. Usuário não cadastrado ou não habilitado para esta empresa.');
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith('offline_config_empresaConfig_') || key.startsWith('offline_config_empresa_config_'))) {
+            try {
+              const raw = localStorage.getItem(key);
+              if (raw) {
+                const parsed = JSON.parse(raw) as EmpresaConfig;
+                if (parsed) {
+                  const rep = (parsed.nomeRepresentante || '').trim().toLowerCase();
+                  const em = (parsed.email || '').trim().toLowerCase();
+                  const cnpjClean = (parsed.cnpj || '').replace(/\D/g, '');
+                  if (inputUser === rep || inputUser === em || (cnpjClean && inputUser === cnpjClean.toLowerCase())) {
+                    matchedTenantConfig = parsed;
+                    break;
+                  }
+                }
+              }
+            } catch (e) {}
+          }
+        }
+      }
+
+      // 4. Bloquear se não for usuário válido nem Master nem tenant cadastrado
+      if (!userMatch && !isMasterMatch && !matchedTenantConfig) {
+        setError('Acesso negado. Usuário ou e-mail não cadastrado no sistema.');
         setLoading(false);
         return;
       }
 
-      // 5. Validar a senha de forma estrita de acordo com o tipo de usuário
-      const expectedPassword = userMatch ? (userMatch.senha || '123456') : masterSenha;
+      // 5. Validar a senha de forma estrita de acordo com o tipo de usuário encontrado
+      let expectedPassword = '123456';
+      if (userMatch) {
+        expectedPassword = userMatch.senha || '123456';
+      } else if (matchedTenantConfig) {
+        expectedPassword = matchedTenantConfig.senhaAcesso || '123456';
+      } else {
+        expectedPassword = empresaConfig.senhaAcesso || '123456';
+      }
+
       const isPasswordValid = (trimmedSenha === expectedPassword);
 
       if (!isPasswordValid) {
@@ -324,19 +461,39 @@ export const LockScreen: React.FC<LockScreenProps> = ({
         return;
       }
 
+      // Resgatar o CNPJ e Tenant ID da empresa correspondente ao usuário
+      const targetCnpj = userMatch?.cnpjEmpresa || matchedTenantConfig?.cnpj || empresaConfig.cnpj || '';
+      const targetTenantId = targetCnpj.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+
+      if (targetTenantId && targetTenantId !== '00000000000000') {
+        localStorage.setItem('locadora_last_active_tenant', targetTenantId);
+      }
+
+      // Atualizar a configuração da empresa no estado global se um tenant específico foi identificado
+      if (matchedTenantConfig && onUpdateEmpresaConfig) {
+        onUpdateEmpresaConfig(matchedTenantConfig);
+      } else if (targetTenantId) {
+        try {
+          const loadedCfg = await getConfig<EmpresaConfig>('empresaConfig', empresaConfig);
+          if (loadedCfg && onUpdateEmpresaConfig) {
+            onUpdateEmpresaConfig(loadedCfg);
+          }
+        } catch (e) {}
+      }
+
       // Check if this user requires email seed verification on first use
-      const requiresSeed = userMatch ? (!userMatch.isEmailVerified && userMatch.emailConfirmationSeed) : (!empresaConfig.isEmailVerified && empresaConfig.emailConfirmationSeed);
+      const requiresSeed = userMatch ? (!userMatch.isEmailVerified && userMatch.emailConfirmationSeed) : (matchedTenantConfig ? (!matchedTenantConfig.isEmailVerified && matchedTenantConfig.emailConfirmationSeed) : (!empresaConfig.isEmailVerified && empresaConfig.emailConfirmationSeed));
 
       if (requiresSeed) {
-        const seedToVerify = userMatch?.emailConfirmationSeed || empresaConfig.emailConfirmationSeed || 'SEED-123456';
-        const userEmail = userMatch?.email || empresaConfig.email || 'contato@locadora.com.br';
+        const seedToVerify = userMatch?.emailConfirmationSeed || matchedTenantConfig?.emailConfirmationSeed || empresaConfig.emailConfirmationSeed || 'SEED-123456';
+        const userEmail = userMatch?.email || matchedTenantConfig?.email || empresaConfig.email || 'contato@locadora.com.br';
         const devToAuth = userMatch || matchedDevice || {
           id: deviceUuid,
           imei: deviceUuid,
           nomeDispositivo: nomeDispositivo.trim() || 'Terminal Principal Administrador',
-          cnpjEmpresa: empresaConfig.cnpj || '',
-          usuario: empresaConfig.nomeRepresentante || 'Administrador',
-          telefone: telefone.trim() || empresaConfig.telefoneWhatsapp || '',
+          cnpjEmpresa: targetCnpj,
+          usuario: userMatch?.usuario || matchedTenantConfig?.nomeRepresentante || empresaConfig.nomeRepresentante || 'Administrador',
+          telefone: telefone.trim() || matchedTenantConfig?.telefoneWhatsapp || empresaConfig.telefoneWhatsapp || '',
           status: 'APROVADO',
           nivelAcesso: 'ADMINISTRADOR' as const,
           dataSolicitacao: Date.now(),
@@ -360,9 +517,9 @@ export const LockScreen: React.FC<LockScreenProps> = ({
         id: deviceUuid,
         imei: deviceUuid,
         nomeDispositivo: nomeDispositivo.trim() || 'Terminal Principal Administrador',
-        cnpjEmpresa: empresaConfig.cnpj || '',
-        usuario: empresaConfig.nomeRepresentante || 'Administrador',
-        telefone: telefone.trim() || empresaConfig.telefoneWhatsapp || '',
+        cnpjEmpresa: targetCnpj,
+        usuario: userMatch?.usuario || matchedTenantConfig?.nomeRepresentante || empresaConfig.nomeRepresentante || 'Administrador',
+        telefone: telefone.trim() || matchedTenantConfig?.telefoneWhatsapp || empresaConfig.telefoneWhatsapp || '',
         status: 'APROVADO',
         nivelAcesso: 'ADMINISTRADOR' as const,
         dataSolicitacao: Date.now(),
@@ -506,13 +663,18 @@ export const LockScreen: React.FC<LockScreenProps> = ({
           </div>
 
           <div>
-            <h1 className="font-serif italic text-xl text-white font-bold tracking-tight">Acervus Core</h1>
+            <div className="flex items-center justify-center gap-2">
+              <h1 className="font-serif italic text-xl text-white font-bold tracking-tight">Acervus Core</h1>
+              <span className="text-[10px] font-mono text-[#D4AF37] bg-[#D4AF37]/10 border border-[#D4AF37]/30 px-2 py-0.5 rounded-full font-bold">
+                {SYSTEM_VERSION}
+              </span>
+            </div>
             <p className="text-[10px] uppercase tracking-widest text-[#D4AF37] font-semibold mt-0.5 font-mono">
               Gestão Inteligente de Acervos & Reservas
             </p>
 
-            {/* Tenant Company Name & Optional Badge */}
-            {empresaConfig?.nomeFantasia && (
+            {/* Tenant Company Name & Optional Badge (Only in LOGIN mode) */}
+            {formMode === 'LOGIN' && empresaConfig?.nomeFantasia && (
               <div className="mt-2 pt-2 border-t border-[#27272A] flex items-center justify-center gap-2">
                 <span className="text-[9px] uppercase font-mono text-[#71717A]">Unidade Locadora:</span>
                 {!!getAppLogoUrl(empresaConfig?.logoUrl) && (
@@ -771,57 +933,54 @@ export const LockScreen: React.FC<LockScreenProps> = ({
                     </div>
                   </div>
 
-                  {/* Grid 2: CNPJ & WhatsApp */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {/* CNPJ Field */}
-                    <div className="space-y-1">
+                  {/* CNPJ Field */}
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-[#A1A1AA] flex items-center gap-1">
+                      <Building2 size={12} className="text-[#D4AF37]" /> CNPJ do Cliente/Empresa
+                    </label>
+                    <div className="relative flex items-center h-9.5 w-full">
+                      <Building2 size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#71717A] pointer-events-none shrink-0 z-10" />
+                      <input
+                        type="text"
+                        required
+                        maxLength={20}
+                        value={cnpj}
+                        onChange={(e) => setCnpj(e.target.value)}
+                        onFocus={handleFocusScroll}
+                        placeholder="Ex: 00.000.000/0001-00"
+                        className="w-full h-9.5 pl-9 pr-3.5 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Próxima Linha: Código de País & Número de Telefone / WhatsApp */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center h-[17px]">
                       <label className="text-[11px] font-semibold text-[#A1A1AA] flex items-center gap-1">
-                        <Building2 size={12} className="text-[#D4AF37]" /> CNPJ do Cliente/Empresa
+                        <Phone size={12} className="text-[#D4AF37]" /> Código de País & Telefone / WhatsApp
                       </label>
-                      <div className="relative flex items-center h-9.5 w-full">
-                        <Building2 size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#71717A] pointer-events-none shrink-0 z-10" />
-                        <input
-                          type="text"
-                          required
-                          maxLength={20}
-                          value={cnpj}
-                          onChange={(e) => setCnpj(e.target.value)}
-                          onFocus={handleFocusScroll}
-                          placeholder="Ex: 45.678.910/0001-23"
-                          className="w-full h-9.5 pl-9 pr-3.5 bg-[#18181B] border border-[#27272A] rounded-xl text-xs text-white placeholder-[#71717A] focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
-                        />
-                      </div>
+                      
+                      {isDetectingPhone ? (
+                        <span className="text-[9px] text-amber-400 flex items-center gap-0.5 font-semibold animate-pulse">
+                          <Radio size={10} className="animate-spin text-amber-500" />
+                          SIM...
+                        </span>
+                      ) : phoneDetected ? (
+                        <span className="text-[8px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded-full font-mono font-bold flex items-center gap-0.5 animate-pulse">
+                          <CheckCircle2 size={8} />
+                          SIM1
+                        </span>
+                      ) : null}
                     </div>
 
-                    {/* Dynamic SIM card Phone Field */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between items-center h-[17px]">
-                        <label className="text-[11px] font-semibold text-[#A1A1AA] flex items-center gap-1">
-                          <Phone size={12} className="text-[#D4AF37]" /> Telefone / WhatsApp
-                        </label>
-                        
-                        {isDetectingPhone ? (
-                          <span className="text-[9px] text-amber-400 flex items-center gap-0.5 font-semibold animate-pulse">
-                            <Radio size={10} className="animate-spin text-amber-500" />
-                            SIM...
-                          </span>
-                        ) : phoneDetected ? (
-                          <span className="text-[8px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded-full font-mono font-bold flex items-center gap-0.5 animate-pulse">
-                            <CheckCircle2 size={8} />
-                            SIM1
-                          </span>
-                        ) : null}
-                      </div>
-
-                      <div className="relative h-9.5">
-                        <PhoneInput
-                          value={telefone}
-                          onChange={(val) => setTelefone(val)}
-                          required
-                          placeholder="11 99999-8888"
-                          className="h-9.5 text-xs rounded-xl"
-                        />
-                      </div>
+                    <div className="relative h-9.5">
+                      <PhoneInput
+                        value={telefone}
+                        onChange={(val) => setTelefone(val)}
+                        required
+                        placeholder="11 99999-8888"
+                        className="h-9.5 text-xs rounded-xl"
+                      />
                     </div>
                   </div>
 
@@ -960,6 +1119,17 @@ export const LockScreen: React.FC<LockScreenProps> = ({
 
       </div>
 
+      {/* Footer System Version Badge */}
+      <div className="mt-3 text-center">
+        <span className="text-[11px] font-mono text-[#71717A] flex items-center justify-center gap-1.5">
+          <span>Acervus Core</span>
+          <span className="text-[#D4AF37] font-bold bg-[#D4AF37]/10 border border-[#D4AF37]/20 px-2 py-0.5 rounded-md">
+            {SYSTEM_VERSION}
+          </span>
+          <span>• Gestão Inteligente de Acervos</span>
+        </span>
+      </div>
+
       {/* Android Native-Style BiometricPrompt Modal */}
       {showBiometricModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -1052,49 +1222,91 @@ export const LockScreen: React.FC<LockScreenProps> = ({
         </div>
       )}
 
-      {/* Email Seed Verification Modal for First Use */}
+      {/* Email / WhatsApp Seed Verification Modal for First Use */}
       {showSeedModal && seedModalData && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-md bg-[#111113] border border-[#27272A] rounded-3xl p-6 shadow-2xl flex flex-col space-y-5 relative">
-            <div className="flex items-center gap-3 pb-4 border-b border-[#27272A]">
+          <div className="w-full max-w-md bg-[#111113] border border-[#27272A] rounded-3xl p-6 shadow-2xl flex flex-col space-y-4 relative">
+            <div className="flex items-center gap-3 pb-3 border-b border-[#27272A]">
               <div className="w-10 h-10 rounded-2xl bg-[#D4AF37]/10 border border-[#D4AF37]/30 flex items-center justify-center text-[#D4AF37]">
                 <MailCheck size={22} />
               </div>
               <div>
                 <h3 className="font-serif italic text-white text-base">
-                  Verificação de E-mail (Primeiro Uso)
+                  Verificação do Primeiro Acesso
                 </h3>
                 <p className="text-[#A1A1AA] text-xs">
-                  Semente enviada para a confirmação da conta
+                  Validação de segurança de e-mail e WhatsApp
                 </p>
               </div>
             </div>
 
             <div className="space-y-3">
               <p className="text-xs text-[#A1A1AA] leading-relaxed">
-                Foi gerada uma semente de confirmação enviada para o e-mail:
+                A semente de confirmação foi enviada para os canais de contato cadastrados abaixo:
               </p>
-              <div className="bg-[#18181B] border border-[#27272A] p-3 rounded-xl flex items-center justify-between">
-                <span className="text-xs font-mono text-emerald-400 font-bold">{seedModalData.email}</span>
-                <Mail size={16} className="text-[#A1A1AA]" />
+              
+              {/* E-mail Destination Card */}
+              <div className="bg-[#18181B] border border-[#27272A] p-3 rounded-xl flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Mail size={16} className="text-[#D4AF37] shrink-0" />
+                  <div className="min-w-0">
+                    <span className="text-[10px] text-[#71717A] uppercase font-bold block">E-mail de Destino</span>
+                    <span className="text-xs font-mono text-emerald-400 font-bold truncate block">{seedModalData.email}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={isSendingEmail}
+                  onClick={() => sendEmailNotification(seedModalData.email, seedModalData.expectedSeed, seedModalData.dev.usuario)}
+                  className="px-2.5 py-1 bg-[#27272A] hover:bg-[#3F3F46] text-[#D4AF37] disabled:opacity-50 rounded-lg text-[10px] font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                  title="Reenviar e-mail de confirmação"
+                >
+                  {isSendingEmail ? (
+                    <Loader2 size={12} className="animate-spin text-[#D4AF37]" />
+                  ) : (
+                    <RefreshCw size={12} />
+                  )}
+                  <span>{isSendingEmail ? 'Enviando...' : 'Reenviar'}</span>
+                </button>
               </div>
 
-              {/* Helpful Demo Banner for Testing / Autofill */}
-              <div className="bg-amber-500/10 border border-amber-500/20 p-3 rounded-xl space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">Semente de Validação Gerada</span>
-                  <button
-                    type="button"
-                    onClick={() => setInputSeed(seedModalData.expectedSeed)}
-                    className="text-[10px] text-[#D4AF37] hover:underline font-bold cursor-pointer"
-                  >
-                    Auto-preencher Semente
-                  </button>
+              {/* WhatsApp Destination Card if phone exists */}
+              {(seedModalData.dev.telefone || empresaConfig.telefoneWhatsapp) && (
+                <div className="bg-[#18181B] border border-[#27272A] p-3 rounded-xl flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Send size={16} className="text-emerald-400 shrink-0" />
+                    <div className="min-w-0">
+                      <span className="text-[10px] text-[#71717A] uppercase font-bold block">WhatsApp Cadastrado</span>
+                      <span className="text-xs font-mono text-white font-bold truncate block">
+                        {seedModalData.dev.telefone || empresaConfig.telefoneWhatsapp}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-md font-bold shrink-0">
+                    Notificado
+                  </span>
                 </div>
-                <p className="text-sm font-mono font-bold text-amber-300">
-                  {seedModalData.expectedSeed}
-                </p>
-              </div>
+              )}
+
+              {/* Real-time Email Dispatch Status */}
+              {emailSendStatus && (
+                <div className="p-2.5 bg-[#18181B] border border-emerald-500/30 rounded-xl text-[11px] text-emerald-300 flex items-start gap-2">
+                  <Info size={14} className="text-[#D4AF37] shrink-0 mt-0.5" />
+                  <div className="flex-1 space-y-1">
+                    <p className="leading-tight">{emailSendStatus}</p>
+                    {emailPreviewUrl && (
+                      <a
+                        href={emailPreviewUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-[10px] text-[#D4AF37] hover:underline font-bold"
+                      >
+                        <ExternalLink size={10} /> Visualizar E-mail de Teste (Inbox Virtual)
+                      </a>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {seedError && (
                 <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-400 flex items-center gap-2">
@@ -1105,7 +1317,7 @@ export const LockScreen: React.FC<LockScreenProps> = ({
 
               <div className="space-y-1.5 pt-1">
                 <label className="text-xs font-semibold text-[#A1A1AA] flex items-center gap-1.5">
-                  <KeyRound size={14} className="text-[#D4AF37]" /> Informe a Semente Recebida
+                  <KeyRound size={14} className="text-[#D4AF37]" /> Informe o Código Recebido
                 </label>
                 <input
                   type="text"

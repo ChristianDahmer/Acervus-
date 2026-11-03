@@ -5,6 +5,7 @@ import { GOVBR_ENDPOINTS } from '../lib/govbrSignature';
 import { COLOR_PRESETS, THEME_MODE_PRESETS, getContrastTextColor } from '../utils/themeUtils';
 import { CategoriasView } from './CategoriasView';
 import { WhatsAppTemplatesConfigView } from './WhatsAppTemplatesConfigView';
+import { WhatsAppLiveMonitorView } from './WhatsAppLiveMonitorView';
 import { WorkManagerSimModal } from './WorkManagerSimModal';
 import { PhoneInput } from './PhoneInput';
 import { DeveloperTestPanel } from './DeveloperTestPanel';
@@ -14,12 +15,14 @@ import { PersonalizacaoAbasView } from './PersonalizacaoAbasView';
 import { PainelConfiguracaoView } from './PainelConfiguracaoView';
 import { PlanoAssinaturaSuporteView } from './PlanoAssinaturaSuporteView';
 import { GuiaSistemaArquiteturaView } from './GuiaSistemaArquiteturaView';
+import { PWAInstallPanel } from './PWAInstallPanel';
 import { saveDocument, getActiveTenantId } from '../lib/firebaseSync';
 import { getAppLogoUrl, handleLogoError } from '../utils/logoUtils';
 import { formatCurrencyBRL, parseCurrencyBRLToNumber } from '../utils/currencyMask';
 import { EnderecoFormFields } from './EnderecoFormFields';
 import { formatEnderecoCompleto, parseEnderecoCompleto, AddressData } from '../utils/addressUtils';
 import {
+  Download,
   Building2,
   Crown,
   FileSpreadsheet,
@@ -160,16 +163,26 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
   onNavigateToCreateOrcamento,
   onOpenOnboardingWizard,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'empresa' | 'planos_assinatura' | 'painel_configuracao' | 'categorias' | 'personalizacao_abas' | 'whatsapp' | 'tema' | 'google_forms' | 'govbr' | 'permissoes' | 'dispositivos' | 'sincronizacao' | 'developer' | 'instagram_sorteio' | 'admin_dados' | 'guia_arquitetura'>(
+  const [activeSubTab, setActiveSubTab] = useState<'empresa' | 'planos_assinatura' | 'painel_configuracao' | 'categorias' | 'personalizacao_abas' | 'whatsapp' | 'tema' | 'google_forms' | 'govbr' | 'permissoes' | 'dispositivos' | 'sincronizacao' | 'developer' | 'instagram_sorteio' | 'admin_dados' | 'guia_arquitetura' | 'instalacao_app'>(
     initialSubTab
   );
 
-  // Isolamento Multi-Tenant estrito para dispositivos/operadores:
+  // Isolamento Multi-Tenant estrito e Deduplicação para dispositivos/operadores:
   const tenantCnpjClean = (empresaConfig?.cnpj || '').replace(/\D/g, '');
-  const filteredDispositivos = dispositivos.filter(d => {
-    const devCnpjClean = (d.cnpjEmpresa || '').replace(/\D/g, '');
-    return devCnpjClean === tenantCnpjClean;
-  });
+  const filteredDispositivos = React.useMemo(() => {
+    const uniqueMap = new Map<string, DispositivoAutorizado>();
+    (dispositivos || []).forEach((d) => {
+      if (!d) return;
+      const devCnpjClean = (d.cnpjEmpresa || '').replace(/\D/g, '');
+      if (!tenantCnpjClean || devCnpjClean === tenantCnpjClean || !devCnpjClean) {
+        const key = d.id || d.device_id || d.hardwareId || (d.usuarioEmail ? `email-${d.usuarioEmail.toLowerCase()}` : null) || (d.usuarioNome ? `nome-${d.usuarioNome.toLowerCase()}` : null) || d.impressaoDigital;
+        if (key && !uniqueMap.has(key)) {
+          uniqueMap.set(key, d);
+        }
+      }
+    });
+    return Array.from(uniqueMap.values());
+  }, [dispositivos, tenantCnpjClean]);
 
   useEffect(() => {
     if (initialSubTab) {
@@ -204,8 +217,8 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
       icon: Layers,
     },
     whatsapp: {
-      title: 'Modelos de Mensagens',
-      subtitle: 'Customize as mensagens e templates automáticos enviados aos clientes via WhatsApp API.',
+      title: 'Central de Mensagens & Monitoramento IA (WhatsApp)',
+      subtitle: 'Monitoramento em tempo real com IA para identificação de clientes, detecção de comprovantes PIX e automação de mensagens.',
       icon: MessageSquare,
     },
     tema: {
@@ -258,6 +271,11 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
       subtitle: 'Documentação técnica oficial, Clean Architecture, persistência Room/SQLite e especificações do Acervus Core.',
       icon: BookOpen,
     },
+    instalacao_app: {
+      title: 'Instalação do Aplicativo (Android & Windows)',
+      subtitle: 'Instale o Acervus Core diretamente no seu smartphone Android ou computador Windows para navegação nativa e suporte offline.',
+      icon: Download,
+    },
   };
 
   // Google Drive Modal States & Options
@@ -278,11 +296,11 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
     isLoading: boolean;
   }>>({
     'root': { id: 'root', name: 'Google Drive', path: '/', parentId: null, childIds: ['meu-drive', 'compartilhados', 'drives-equipe'], isExpanded: true, isLoading: false },
-    'meu-drive': { id: 'meu-drive', name: 'Meu Drive', path: '/Meu Drive', parentId: 'root', childIds: ['bora-festar', 'fotos-eventos', 'docs-adm', 'modelos-pdf'], isExpanded: true, isLoading: false },
-    'bora-festar': { id: 'bora-festar', name: 'Bora Festar Locações', path: '/Meu Drive/Bora Festar Locações', parentId: 'meu-drive', childIds: ['bora-formularios', 'bora-contratos', 'bora-orcamentos'], isExpanded: false, isLoading: false },
-    'bora-formularios': { id: 'bora-formularios', name: 'Formulários', path: '/Meu Drive/Bora Festar Locações/Formulários', parentId: 'bora-festar', childIds: [], isExpanded: false, isLoading: false },
-    'bora-contratos': { id: 'bora-contratos', name: 'Contratos de Locação', path: '/Meu Drive/Bora Festar Locações/Contratos de Locação', parentId: 'bora-festar', childIds: [], isExpanded: false, isLoading: false },
-    'bora-orcamentos': { id: 'bora-orcamentos', name: 'Orçamentos e Fichas', parentId: 'bora-festar', path: '/Meu Drive/Bora Festar Locações/Orçamentos e Fichas', childIds: [], isExpanded: false, isLoading: false },
+    'meu-drive': { id: 'meu-drive', name: 'Meu Drive', path: '/Meu Drive', parentId: 'root', childIds: ['locadora-arquivos', 'fotos-eventos', 'docs-adm', 'modelos-pdf'], isExpanded: true, isLoading: false },
+    'locadora-arquivos': { id: 'locadora-arquivos', name: 'Arquivos da Locadora', path: '/Meu Drive/Arquivos da Locadora', parentId: 'meu-drive', childIds: ['locadora-formularios', 'locadora-contratos', 'locadora-orcamentos'], isExpanded: false, isLoading: false },
+    'locadora-formularios': { id: 'locadora-formularios', name: 'Formulários', path: '/Meu Drive/Arquivos da Locadora/Formulários', parentId: 'locadora-arquivos', childIds: [], isExpanded: false, isLoading: false },
+    'locadora-contratos': { id: 'locadora-contratos', name: 'Contratos de Locação', path: '/Meu Drive/Arquivos da Locadora/Contratos de Locação', parentId: 'locadora-arquivos', childIds: [], isExpanded: false, isLoading: false },
+    'locadora-orcamentos': { id: 'locadora-orcamentos', name: 'Orçamentos e Fichas', parentId: 'locadora-arquivos', path: '/Meu Drive/Arquivos da Locadora/Orçamentos e Fichas', childIds: [], isExpanded: false, isLoading: false },
     'fotos-eventos': { id: 'fotos-eventos', name: 'Fotos Eventos', path: '/Meu Drive/Fotos Eventos', parentId: 'meu-drive', childIds: [], isExpanded: false, isLoading: false },
     'docs-adm': { id: 'docs-adm', name: 'Documentos Administrativos', path: '/Meu Drive/Documentos Administrativos', parentId: 'meu-drive', childIds: [], isExpanded: false, isLoading: false },
     'modelos-pdf': { id: 'modelos-pdf', name: 'Modelos de PDF', path: '/Meu Drive/Modelos de PDF', parentId: 'meu-drive', childIds: [], isExpanded: false, isLoading: false },
@@ -385,7 +403,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
   // Synchronize selected path when opening modal
   useEffect(() => {
     if (isFolderModalOpen) {
-      setSelectedFolderPath(googleAccount.driveFolderPath || '/Meu Drive/Bora Festar Locações/Formulários');
+      setSelectedFolderPath(googleAccount.driveFolderPath || '/Meu Drive/Arquivos da Locadora/Formulários');
     }
   }, [isFolderModalOpen, googleAccount.driveFolderPath]);
 
@@ -854,7 +872,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                     <Sparkles className="text-[#D4AF37] animate-pulse" size={20} />
                   </div>
                   <div>
-                    <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">Assistente de Configuração Inteligente (IA)</h4>
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">Assistente de Configuração</h4>
                     <p className="text-[11px] text-[#A1A1AA]">Prefere configurar sua empresa com auxílio passo-a-passo da Inteligência Artificial?</p>
                   </div>
                 </div>
@@ -862,7 +880,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                   onClick={onOpenOnboardingWizard}
                   className="bg-gradient-to-r from-[#D4AF37] to-[#8B7326] text-black font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-2 hover:scale-105 active:scale-95 transition-all shadow-md shadow-[#D4AF37]/20 cursor-pointer whitespace-nowrap"
                 >
-                  <Sparkles size={14} /> Iniciar Assistente IA
+                  <Sparkles size={14} /> Iniciar Assistente
                 </button>
               </div>
             )}
@@ -903,7 +921,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                   value={empresaData.nomeFantasia}
                   onChange={(e) => handleEmpresaChange('nomeFantasia', e.target.value)}
                   onFocus={handleFocusScroll}
-                  placeholder="Ex: Bora Festar Locações"
+                  placeholder="Ex: Festas & Eventos Locadora"
                   className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all"
                 />
               </div>
@@ -919,7 +937,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                   value={empresaData.razaoSocial}
                   onChange={(e) => handleEmpresaChange('razaoSocial', e.target.value)}
                   onFocus={handleFocusScroll}
-                  placeholder="Ex: Bora Festar Eventos LTDA"
+                  placeholder="Ex: Festas & Eventos Locação LTDA"
                   className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all"
                 />
               </div>
@@ -1243,37 +1261,121 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                 </div>
               </div>
 
-              {/* Valor por Quilômetro do Frete & Chave Google Maps */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center gap-1">
-                    <DollarSign size={14} className="text-[#D4AF37]" /> Valor por Quilômetro do Frete (R$/Km)
+              {/* Parâmetros & Composição do Cálculo de Frete */}
+              <div className="bg-[#18181B] border border-[#27272A] rounded-2xl p-4 space-y-4">
+                <div className="flex items-center justify-between border-b border-[#27272A] pb-2.5">
+                  <label className="block font-medium text-white flex items-center gap-2 text-sm">
+                    <DollarSign size={16} className="text-[#D4AF37]" /> Cálculo & Composição do Frete
                   </label>
-                  <input
-                    type="text"
-                    value={formatCurrencyBRL(empresaData.valorFretePorKm)}
-                    onChange={(e) => handleEmpresaChange('valorFretePorKm', parseCurrencyBRLToNumber(e.target.value))}
-                    onFocus={handleFocusScroll}
-                    placeholder="R$ 0,00"
-                    className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
-                  />
+                  <span className="text-[10px] text-[#D4AF37] bg-[#D4AF37]/10 border border-[#D4AF37]/30 px-2.5 py-0.5 rounded-full font-semibold font-mono">
+                    Logística & Rotas
+                  </span>
                 </div>
 
-                <div>
-                  <label className="block font-medium text-[#A1A1AA] mb-1.5 flex items-center gap-1">
-                    <MapPin size={14} className="text-[#D4AF37]" /> Chave Google Maps API (Distance Matrix)
-                  </label>
-                  <input
-                    type="text"
-                    value={empresaData.googleMapsApiKey || ''}
-                    onChange={(e) => handleEmpresaChange('googleMapsApiKey', e.target.value)}
-                    onFocus={handleFocusScroll}
-                    placeholder="Opcional (Ex: AIzaSy...)"
-                    className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
-                  />
-                  <p className="text-[10px] text-[#71717A] mt-1">
-                    Usado para cálculo exato de rotas. Se omitido, o sistema utiliza o simulador de distância.
-                  </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block font-medium text-[#A1A1AA] mb-1.5 text-xs flex items-center gap-1">
+                      <DollarSign size={13} className="text-[#D4AF37]" /> Valor por Km (R$/Km)
+                    </label>
+                    <input
+                      type="text"
+                      value={formatCurrencyBRL(empresaData.valorFretePorKm)}
+                      onChange={(e) => handleEmpresaChange('valorFretePorKm', parseCurrencyBRLToNumber(e.target.value))}
+                      onFocus={handleFocusScroll}
+                      placeholder="R$ 0,00"
+                      className="w-full px-3.5 py-2.5 bg-[#111113] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-medium text-[#A1A1AA] mb-1.5 text-xs flex items-center gap-1">
+                      <RefreshCw size={13} className="text-[#D4AF37]" /> Nº de Deslocamentos (Legs)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={empresaData.numeroDeslocamentosFrete ?? 4}
+                      onChange={(e) => handleEmpresaChange('numeroDeslocamentosFrete', Math.max(1, parseInt(e.target.value) || 4))}
+                      onFocus={handleFocusScroll}
+                      placeholder="4"
+                      className="w-full px-3.5 py-2.5 bg-[#111113] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all font-mono font-bold text-[#D4AF37]"
+                    />
+                    <p className="text-[10px] text-[#71717A] mt-1">
+                      Padrão: 4 deslocamentos (2 idas + 2 voltas para entrega e coleta).
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block font-medium text-[#A1A1AA] mb-1.5 text-xs flex items-center gap-1">
+                      <MapPin size={13} className="text-[#D4AF37]" /> Chave Google Maps API
+                    </label>
+                    <input
+                      type="text"
+                      value={empresaData.googleMapsApiKey || ''}
+                      onChange={(e) => handleEmpresaChange('googleMapsApiKey', e.target.value)}
+                      onFocus={handleFocusScroll}
+                      placeholder="Opcional (AIzaSy...)"
+                      className="w-full px-3.5 py-2.5 bg-[#111113] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all font-mono"
+                    />
+                    <p className="text-[10px] text-[#71717A] mt-1">
+                      Distance Matrix. Se omitida, usará OpenStreetMap OSRM.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Composição Ilustrativa das 4 Jogadas / Deslocamentos */}
+                <div className="bg-[#111113] border border-[#27272A] p-3.5 rounded-xl space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#D4AF37] flex items-center gap-1.5 uppercase tracking-wider">
+                      <Info size={13} /> Entenda a Composição das {(empresaData.numeroDeslocamentosFrete ?? 4)} Etapas de Deslocamento
+                    </span>
+                    <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-mono font-bold">
+                      Fórmula: Distância (Km) × R$/Km × {(empresaData.numeroDeslocamentosFrete ?? 4)}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
+                    <div className="bg-[#18181B] p-2 rounded-lg border border-[#27272A] flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] text-[10px] font-bold flex items-center justify-center shrink-0">1</span>
+                      <div>
+                        <span className="text-white font-bold block">1. Sede ➔ Evento</span>
+                        <span className="text-[#71717A] text-[10px]">Entrega do Acervo</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#18181B] p-2 rounded-lg border border-[#27272A] flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] text-[10px] font-bold flex items-center justify-center shrink-0">2</span>
+                      <div>
+                        <span className="text-white font-bold block">2. Evento ➔ Sede</span>
+                        <span className="text-[#71717A] text-[10px]">Retorno da Equipe</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#18181B] p-2 rounded-lg border border-[#27272A] flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] text-[10px] font-bold flex items-center justify-center shrink-0">3</span>
+                      <div>
+                        <span className="text-white font-bold block">3. Sede ➔ Evento</span>
+                        <span className="text-[#71717A] text-[10px]">Deslocamento Coleta</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#18181B] p-2 rounded-lg border border-[#27272A] flex items-center gap-2">
+                      <span className="w-5 h-5 rounded-full bg-[#D4AF37]/20 text-[#D4AF37] text-[10px] font-bold flex items-center justify-center shrink-0">4</span>
+                      <div>
+                        <span className="text-white font-bold block">4. Evento ➔ Sede</span>
+                        <span className="text-[#71717A] text-[10px]">Retorno com Acervo</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Simulação em Tempo Real */}
+                  <div className="text-[11px] text-[#A1A1AA] pt-1 border-t border-[#27272A]/60 flex items-center justify-between">
+                    <span>Simulação Exemplo (Trecho de 10 Km):</span>
+                    <span className="text-white font-mono">
+                      10 Km × {formatCurrencyBRL(empresaData.valorFretePorKm || 0)}/Km × {(empresaData.numeroDeslocamentosFrete ?? 4)} deslocamentos = <strong className="text-emerald-400">{formatCurrencyBRL((10 * (empresaData.valorFretePorKm || 0) * (empresaData.numeroDeslocamentosFrete ?? 4)))}</strong>
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -1404,7 +1506,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
                       value={empresaData.bancoBeneficiario || ''}
                       onChange={(e) => handleEmpresaChange('bancoBeneficiario', e.target.value)}
                       onFocus={handleFocusScroll}
-                      placeholder="Ex: Bora Festar Locações LTDA"
+                      placeholder="Ex: Festas & Eventos Locação LTDA"
                       className="w-full px-3.5 py-2.5 bg-[#18181B] border border-[#27272A] rounded-xl text-white text-sm focus:border-[#D4AF37] focus:outline-none transition-all"
                     />
                   </div>
@@ -1484,11 +1586,14 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
         />
       )}
 
-      {/* TAB 2.5: MODELOS DE MENSAGENS WHATSAPP */}
+      {/* TAB 2.5: CENTRAL DE MENSAGENS & MONITORAMENTO IA WHATSAPP */}
       {activeSubTab === 'whatsapp' && (
-        <WhatsAppTemplatesConfigView
+        <WhatsAppLiveMonitorView
           empresaConfig={empresaData}
           onSaveConfig={onSaveConfig}
+          clientes={clientes}
+          reservas={reservas}
+          onRefreshData={onRefreshData}
         />
       )}
 
@@ -2435,6 +2540,7 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
             webForms={webForms} 
             dispositivos={dispositivos} 
             empresaConfig={empresaConfig}
+            authenticatedDevice={authenticatedDevice}
             onTriggerWorkerSync={onTriggerWorkerSync}
             onRefreshData={onRefreshData}
             onSaveConfig={onSaveConfig}
@@ -2473,6 +2579,11 @@ export const EmpresaConfigView: React.FC<EmpresaConfigViewProps> = ({
       {/* TAB 12: GUIA DO SISTEMA & ARQUITETURA */}
       {activeSubTab === 'guia_arquitetura' && (
         <GuiaSistemaArquiteturaView />
+      )}
+
+      {/* TAB 13: INSTALAÇÃO DO APP (ANDROID & WINDOWS) */}
+      {activeSubTab === 'instalacao_app' && (
+        <PWAInstallPanel />
       )}
 
       {/* TAB 11: GESTÃO DE DADOS BANCO DE DADOS CLOUD SQL */}

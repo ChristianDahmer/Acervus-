@@ -36,9 +36,12 @@ import {
   Smartphone,
   Volume2,
   RotateCcw,
-  VolumeX
+  VolumeX,
+  ZoomIn,
+  ZoomOut,
+  Download
 } from 'lucide-react';
-import { enhancePhotoAsync } from '../lib/aiEngine';
+import { enhancePhotoAsync, describeItemWithAIAsync } from '../lib/aiEngine';
 import { StandardListControls, StandardPagination, StandardEmptyState } from './StandardListContainer';
 import jsQR from 'jsqr';
 import { QRCodeSVG } from 'qrcode.react';
@@ -344,6 +347,51 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [permissionNotice, setPermissionNotice] = useState<string | null>(null);
   const [isEnhancingPhoto, setIsEnhancingPhoto] = useState(false);
+  const [isGeneratingDescription, setIsGeneratingDescription] = useState(false);
+
+  // Lightbox Full Image View State
+  const [fullImagePreview, setFullImagePreview] = useState<{
+    imageUrl: string;
+    nome: string;
+    categoria?: string;
+    precoAluguel?: number;
+  } | null>(null);
+  const [imageZoom, setImageZoom] = useState<number>(1);
+  const lastTapRef = useRef<{ [key: string]: number }>({});
+
+  const handleOpenFullImage = (item: { imageUrl?: string; nome: string; categoria?: string; precoAluguel?: number }) => {
+    if (!item.imageUrl) return;
+    setFullImagePreview({
+      imageUrl: item.imageUrl,
+      nome: item.nome,
+      categoria: item.categoria,
+      precoAluguel: item.precoAluguel,
+    });
+    setImageZoom(1);
+  };
+
+  const handleTouchDoubleTap = (key: string, item: { imageUrl?: string; nome: string; categoria?: string; precoAluguel?: number }) => {
+    const now = Date.now();
+    const lastTap = lastTapRef.current[key] || 0;
+    if (now - lastTap < 350) {
+      handleOpenFullImage(item);
+      lastTapRef.current[key] = 0;
+    } else {
+      lastTapRef.current[key] = now;
+    }
+  };
+
+  // Keyboard shortcut (ESC) to close image preview
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && fullImagePreview) {
+        setFullImagePreview(null);
+        setImageZoom(1);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [fullImagePreview]);
 
   // Helper to calculate the kit's real-time dynamic stock based on its components
   const getEffectiveStock = (item: ItemAcervo) => {
@@ -515,6 +563,53 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
       setPermissionNotice(err.message || 'Não foi possível realçar a foto.');
     } finally {
       setIsEnhancingPhoto(false);
+    }
+  };
+
+  const handleGenerateDescriptionWithAI = async () => {
+    if (!formData.imageUrl) {
+      setPermissionNotice('Por favor, adicione uma foto do item primeiro para que a IA possa analisá-la.');
+      return;
+    }
+    setIsGeneratingDescription(true);
+    setPermissionNotice('Analisando a imagem com Inteligência Artificial para gerar a descrição...');
+
+    try {
+      const res = await describeItemWithAIAsync({
+        imageBase64: formData.imageUrl,
+        itemNome: formData.nome || undefined
+      });
+
+      if (res && res.descricao) {
+        setFormData((prev) => {
+          const updated = { ...prev, descricao: res.descricao.slice(0, 512) };
+          
+          // Se o nome atual estiver em branco ou for muito curto/genérico, use o sugerido pela IA
+          const nomeAtualMudar = !prev.nome || prev.nome.trim() === "" || prev.nome.toLowerCase() === "novo item" || prev.nome.toLowerCase() === "item";
+          if (nomeAtualMudar && res.nomeSugerido) {
+            updated.nome = res.nomeSugerido;
+          }
+
+          // Se a categoria sugerida corresponder a uma de nossas categorias ativas (ignorando caso), defina-a
+          if (res.categoriaSugerida && categorias && categorias.length > 0) {
+            const matchesCat = categorias.find(
+              (c) => c.ativo && c.nome.toLowerCase() === res.categoriaSugerida.toLowerCase()
+            );
+            if (matchesCat) {
+              updated.categoria = matchesCat.nome;
+            }
+          }
+
+          return updated;
+        });
+
+        setPermissionNotice('✨ Descrição e sugestões geradas com sucesso pela IA!');
+        setTimeout(() => setPermissionNotice(null), 5000);
+      }
+    } catch (err: any) {
+      setPermissionNotice(err.message || 'Não foi possível gerar a descrição com IA.');
+    } finally {
+      setIsGeneratingDescription(false);
     }
   };
 
@@ -799,8 +894,8 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                       <div
                         key={item.id}
                         onClick={() => isSelectionMode && toggleSelectForWebForm(item.id)}
-                        onDoubleClick={() => setFullscreenItem(item)}
-                        title="Dica: Dê dois cliques para abrir em tela cheia"
+                        onDoubleClick={() => handleOpenFullImage(item)}
+                        title="Dê dois cliques para ver a imagem cheia"
                         className={`bg-[#111113] border rounded-2xl overflow-hidden shadow-xl transition-all flex flex-col cursor-pointer ${
                       isSelectionMode ? 'cursor-pointer hover:border-[#D4AF37]' : ''
                     } ${
@@ -810,18 +905,40 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                     }`}
                   >
                     {/* Image & Badges */}
-                    <div className="relative h-48 bg-[#0A0A0B] overflow-hidden group">
+                    <div 
+                      className="relative h-48 bg-[#0A0A0B] overflow-hidden group flex items-center justify-center cursor-pointer"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenFullImage(item);
+                      }}
+                      onTouchStart={() => handleTouchDoubleTap(`grid-${item.id}`, item)}
+                      title="Dê 2 cliques para ver a imagem cheia"
+                    >
+                      <div className="absolute inset-0 bg-cover bg-center filter blur-xl opacity-30 scale-110" style={{ backgroundImage: `url(${item.imageUrl})` }} />
                       <img
                         src={item.imageUrl}
                         alt={item.nome}
-                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 opacity-90 group-hover:opacity-100"
+                        className="relative z-10 w-full h-full object-contain p-2 transition-transform duration-500 group-hover:scale-105"
                         onError={(e) => {
                           (e.target as HTMLElement).style.display = 'none';
                         }}
                       />
 
+                      {/* Quick Full Image Zoom button overlay */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenFullImage(item);
+                        }}
+                        className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity bg-black/75 hover:bg-[#D4AF37] text-[#D4AF37] hover:text-black border border-[#D4AF37]/40 p-1.5 rounded-lg text-xs flex items-center gap-1 backdrop-blur-md shadow-lg z-20 cursor-pointer"
+                        title="Ver imagem cheia (2 cliques)"
+                      >
+                        <Maximize2 size={13} />
+                      </button>
+
                       {/* Category Badge */}
-                      <div className="absolute top-3 left-3 bg-[#0A0A0B]/80 backdrop-blur-md border border-[#27272A] text-[#E4E4E7] text-xs px-2.5 py-1 rounded-full font-medium">
+                      <div className="absolute top-3 left-3 bg-[#0A0A0B]/80 backdrop-blur-md border border-[#27272A] text-[#E4E4E7] text-xs px-2.5 py-1 rounded-full font-medium z-10">
                         {item.categoria}
                       </div>
 
@@ -1008,15 +1125,26 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                           </div>
                         )}
 
-                        <div className="w-12 h-12 rounded-xl bg-[#0A0A0B] overflow-hidden border border-[#27272A] shrink-0 relative group">
+                        <div 
+                          className="w-12 h-12 rounded-xl bg-[#0A0A0B] overflow-hidden border border-[#27272A] shrink-0 relative group cursor-pointer"
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenFullImage(item);
+                          }}
+                          onTouchStart={() => handleTouchDoubleTap(`list-${item.id}`, item)}
+                          title="Dê 2 cliques para ver a imagem cheia"
+                        >
                           <img
                             src={item.imageUrl}
                             alt={item.nome}
-                            className="w-full h-full object-cover transition-transform group-hover:scale-110"
+                            className="w-full h-full object-contain p-0.5 transition-transform group-hover:scale-110"
                             onError={(e) => {
                               (e.target as HTMLElement).style.display = 'none';
                             }}
                           />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-[#D4AF37]">
+                            <Maximize2 size={12} />
+                          </div>
                           {item.isKit && (
                             <span className="absolute bottom-0 inset-x-0 bg-[#D4AF37] text-black text-[8px] font-extrabold text-center uppercase tracking-tighter">
                               Kit
@@ -1207,11 +1335,38 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                     <label className="block text-xs font-medium text-[#A1A1AA]">
                       Descrição do Item
                     </label>
-                    <span className={`text-[10px] font-mono font-medium ${
-                      formData.descricao.length >= 500 ? 'text-amber-400 font-bold' : 'text-[#71717A]'
-                    }`}>
-                      {formData.descricao.length}/512
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {formData.imageUrl ? (
+                        <button
+                          type="button"
+                          onClick={handleGenerateDescriptionWithAI}
+                          disabled={isGeneratingDescription}
+                          className="text-[10px] text-[#D4AF37] hover:text-[#E5C158] font-bold flex items-center gap-1 transition-all cursor-pointer bg-[#D4AF37]/10 hover:bg-[#D4AF37]/20 border border-[#D4AF37]/30 px-2 py-0.5 rounded-md disabled:opacity-50"
+                          title="Analisar imagem com IA e preencher descrição"
+                        >
+                          {isGeneratingDescription ? (
+                            <>
+                              <Loader2 size={10} className="animate-spin text-[#D4AF37]" />
+                              <span>Gerando...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles size={10} className="text-[#D4AF37]" />
+                              <span>Descrever com IA</span>
+                            </>
+                          )}
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-[#71717A] italic" title="Adicione uma foto primeiro para habilitar a descrição por IA">
+                          (Adicione foto para IA)
+                        </span>
+                      )}
+                      <span className={`text-[10px] font-mono font-medium ${
+                        formData.descricao.length >= 500 ? 'text-amber-400 font-bold' : 'text-[#71717A]'
+                      }`}>
+                        {formData.descricao.length}/512
+                      </span>
+                    </div>
                   </div>
                   <textarea
                     rows={3}
@@ -1481,11 +1636,20 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
                 {formData.imageUrl && (
                   <div className="bg-[#111113] border border-[#27272A] p-3 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <img
-                        src={formData.imageUrl}
-                        alt="Preview"
-                        className="w-16 h-16 object-cover rounded-lg border border-[#27272A] shrink-0"
-                      />
+                      <div 
+                        className="w-16 h-16 bg-[#0A0A0B] rounded-lg border border-[#27272A] overflow-hidden relative shrink-0 flex items-center justify-center cursor-pointer group"
+                        onDoubleClick={() => handleOpenFullImage({ imageUrl: formData.imageUrl, nome: formData.nome || 'Visualização da Peça', categoria: formData.categoria })}
+                        title="Dê 2 cliques para ver a imagem cheia"
+                      >
+                        <img
+                          src={formData.imageUrl}
+                          alt="Preview"
+                          className="w-full h-full object-contain p-0.5"
+                        />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-[#D4AF37]">
+                          <Maximize2 size={14} />
+                        </div>
+                      </div>
                       <div className="flex-1 min-w-0 space-y-1">
                         <p className="text-xs text-[#E4E4E7] font-semibold flex items-center gap-1.5">
                           <CheckCircle2 size={14} className="text-emerald-400" />
@@ -1712,16 +1876,37 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
                 
                 {/* High Resolution Photo Preview */}
-                <div className="relative rounded-2xl overflow-hidden border border-[#27272A] bg-[#0A0A0B] h-72 sm:h-80 shadow-2xl group">
+                <div 
+                  className="relative rounded-2xl overflow-hidden border border-[#27272A] bg-[#0A0A0B] h-72 sm:h-80 shadow-2xl group flex items-center justify-center cursor-pointer"
+                  onDoubleClick={() => handleOpenFullImage(fullscreenItem)}
+                  onTouchStart={() => handleTouchDoubleTap(`modal-${fullscreenItem.id}`, fullscreenItem)}
+                  title="Dê 2 cliques para expandir a imagem em tela cheia"
+                >
+                  <div className="absolute inset-0 bg-cover bg-center filter blur-xl opacity-40 scale-110" style={{ backgroundImage: `url(${fullscreenItem.imageUrl})` }} />
                   <img
                     src={fullscreenItem.imageUrl}
                     alt={fullscreenItem.nome}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                    className="relative z-10 w-full h-full object-contain p-3 group-hover:scale-105 transition-transform duration-500"
                     onError={(e) => {
                       (e.target as HTMLElement).style.display = 'none';
                     }}
                   />
-                  <div className="absolute top-3 left-3 bg-[#0A0A0B]/80 backdrop-blur-md border border-[#27272A] px-3 py-1.5 rounded-full text-xs font-semibold text-[#E4E4E7]">
+                  
+                  {/* Quick Expand Button */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenFullImage(fullscreenItem);
+                    }}
+                    className="absolute bottom-3 right-3 bg-black/80 hover:bg-[#D4AF37] text-white hover:text-black border border-[#27272A] hover:border-[#D4AF37] px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all z-20 cursor-pointer shadow-lg backdrop-blur-md"
+                    title="Ver em tela cheia"
+                  >
+                    <Maximize2 size={13} />
+                    <span>Ver Imagem Cheia (2 cliques)</span>
+                  </button>
+
+                  <div className="absolute top-3 left-3 bg-[#0A0A0B]/80 backdrop-blur-md border border-[#27272A] px-3 py-1.5 rounded-full text-xs font-semibold text-[#E4E4E7] z-10">
                     {fullscreenItem.categoria}
                   </div>
 
@@ -2209,6 +2394,134 @@ export const InventarioView: React.FC<InventarioViewProps> = ({
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* FULLSCREEN IMAGE LIGHTBOX MODAL (VISUALIZAÇÃO DE IMAGEM CHEIA EM ALTA DEFINIÇÃO) */}
+      {fullImagePreview && (
+        <div 
+          className="fixed inset-0 z-[120] bg-black/95 backdrop-blur-2xl flex flex-col justify-between p-3 sm:p-6 select-none"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setFullImagePreview(null);
+              setImageZoom(1);
+            }
+          }}
+        >
+          {/* Header Bar */}
+          <div className="flex items-center justify-between gap-3 bg-[#111113]/90 border border-[#27272A] p-3 sm:p-4 rounded-2xl backdrop-blur-md z-10 max-w-5xl w-full mx-auto shadow-2xl">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-serif italic font-bold text-white text-base sm:text-lg truncate">
+                  {fullImagePreview.nome}
+                </h3>
+                {fullImagePreview.categoria && (
+                  <span className="bg-[#D4AF37]/15 text-[#D4AF37] border border-[#D4AF37]/30 text-[10px] sm:text-xs px-2 py-0.5 rounded-full font-semibold">
+                    {fullImagePreview.categoria}
+                  </span>
+                )}
+                {fullImagePreview.precoAluguel !== undefined && fullImagePreview.precoAluguel > 0 && (
+                  <span className="text-emerald-400 text-xs font-mono font-bold">
+                    {formatarMoeda(fullImagePreview.precoAluguel)}/dia
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-[#71717A] truncate mt-0.5">
+                Dê 2 cliques na foto para alternar zoom • Pressione ESC ou clique fora para fechar
+              </p>
+            </div>
+
+            {/* Actions Bar */}
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setImageZoom((prev) => Math.max(0.5, Number((prev - 0.25).toFixed(2))))}
+                className="p-2 sm:px-3 sm:py-1.5 bg-[#18181B] hover:bg-[#27272A] border border-[#27272A] text-[#A1A1AA] hover:text-white rounded-xl text-xs flex items-center gap-1 transition-all cursor-pointer"
+                title="Reduzir zoom"
+              >
+                <ZoomOut size={15} />
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => setImageZoom(1)}
+                className="px-2.5 py-1.5 bg-[#18181B] hover:bg-[#27272A] border border-[#27272A] text-white rounded-xl text-xs font-mono transition-all cursor-pointer"
+                title="Redefinir zoom para 100%"
+              >
+                {Math.round(imageZoom * 100)}%
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setImageZoom((prev) => Math.min(3, Number((prev + 0.25).toFixed(2))))}
+                className="p-2 sm:px-3 sm:py-1.5 bg-[#18181B] hover:bg-[#27272A] border border-[#27272A] text-[#A1A1AA] hover:text-white rounded-xl text-xs flex items-center gap-1 transition-all cursor-pointer"
+                title="Aumentar zoom"
+              >
+                <ZoomIn size={15} />
+              </button>
+
+              <a
+                href={fullImagePreview.imageUrl}
+                download={`${fullImagePreview.nome.toLowerCase().replace(/\s+/g, '_')}_foto.jpg`}
+                target="_blank"
+                rel="noreferrer"
+                className="p-2 sm:px-3 sm:py-1.5 bg-[#18181B] hover:bg-[#27272A] border border-[#27272A] text-[#D4AF37] hover:text-white rounded-xl text-xs flex items-center gap-1 transition-all cursor-pointer"
+                title="Baixar imagem ou abrir em nova guia"
+              >
+                <Download size={15} />
+                <span className="hidden sm:inline">Baixar</span>
+              </a>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFullImagePreview(null);
+                  setImageZoom(1);
+                }}
+                className="p-2 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-rose-400 hover:text-white rounded-xl transition-all cursor-pointer"
+                title="Fechar visualização cheia (ESC)"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+
+          {/* Central Image Viewport (Responsive for all device screens) */}
+          <div 
+            className="flex-1 w-full max-w-7xl mx-auto my-auto flex items-center justify-center overflow-hidden relative cursor-zoom-in"
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              setImageZoom((prev) => (prev > 1 ? 1 : 1.8));
+            }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setFullImagePreview(null);
+                setImageZoom(1);
+              }
+            }}
+          >
+            {/* Ambient blur glow matching the image */}
+            <div 
+              className="absolute inset-0 bg-cover bg-center filter blur-3xl opacity-25 scale-125 pointer-events-none"
+              style={{ backgroundImage: `url(${fullImagePreview.imageUrl})` }}
+            />
+
+            {/* High-res Image */}
+            <img
+              src={fullImagePreview.imageUrl}
+              alt={fullImagePreview.nome}
+              style={{ transform: `scale(${imageZoom})` }}
+              className="relative z-10 max-h-[78vh] max-w-[92vw] object-contain rounded-2xl shadow-2xl transition-transform duration-200 ease-out border border-[#27272A]/80 pointer-events-auto"
+            />
+          </div>
+
+          {/* Footer Info */}
+          <div className="text-center z-10">
+            <span className="inline-flex items-center gap-2 bg-[#111113]/80 border border-[#27272A] px-4 py-1.5 rounded-full text-xs text-[#A1A1AA] backdrop-blur-md">
+              <Sparkles size={13} className="text-[#D4AF37]" />
+              Visualização de Imagem em Resolução Cheia • Adaptada ao dispositivo
+            </span>
           </div>
         </div>
       )}

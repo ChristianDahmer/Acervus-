@@ -97,7 +97,7 @@ export const WhatsAppModal: React.FC<WhatsAppModalProps> = ({
         <div className="bg-[#18181B] border border-[#27272A] p-3 rounded-xl flex items-center justify-between text-xs text-[#A1A1AA]">
           <div className="flex items-center gap-2">
             <Building2 size={14} className="text-[#D4AF37]" />
-            <span className="text-white font-medium">{empresaConfig?.nomeFantasia || 'Bora Festar Locações'}</span>
+            <span className="text-white font-medium">{empresaConfig?.nomeFantasia || 'Minha Locadora'}</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1 text-[#E4E4E7]">

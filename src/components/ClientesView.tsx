@@ -61,7 +61,7 @@ const INITIAL_PHONE_CONTACTS = [
   { nome: 'Mariana Silva (Cliente)', telefone: '11966665555', email: 'mariana.silva@hotmail.com' },
   { nome: 'Roberto Cliente Buffet', telefone: '31955554444', email: 'roberto.buffet@yahoo.com' },
   { nome: 'Felipe Souza (Cliente VIP)', telefone: '11944443333', email: 'felipe.vip@gmail.com' },
-  { nome: 'Juliana Cliente Festas', telefone: '21933332222', email: 'juliana.festas@gmail.com' },
+  { nome: 'Fernanda Santos (Cerimonial)', telefone: '21933332222', email: 'fernanda.cerimonial@gmail.com' },
   { nome: 'Dra. Patrícia Odonto', telefone: '11922221111', email: 'patricia.odonto@gmail.com' },
   { nome: 'Carlos Eduardo Primo', telefone: '11911110000', email: 'cadu.primo@gmail.com' },
   { nome: 'Mãe Celular', telefone: '11900009999', email: '' },

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Sparkles,
   Building2,
@@ -43,6 +43,17 @@ export const OnboardingIaWizardModal: React.FC<OnboardingIaWizardModalProps> = (
 }) => {
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [formData, setFormData] = useState<EmpresaConfig>(() => ({ ...empresaConfig }));
+
+  // Sincroniza os dados do formulário sempre que o modal for aberto ou empresaConfig mudar
+  useEffect(() => {
+    if (isOpen && empresaConfig) {
+      setFormData({ ...empresaConfig });
+      setCurrentStep(1);
+      setDocError(null);
+      setAiSuccessMessage(null);
+      setAiPrompt('');
+    }
+  }, [isOpen, empresaConfig]);
   
   // IA Auto-fill states
   const [aiPrompt, setAiPrompt] = useState('');
@@ -67,43 +78,223 @@ export const OnboardingIaWizardModal: React.FC<OnboardingIaWizardModalProps> = (
 
     try {
       // Analisa o texto do usuário com a IA para extrair dados da empresa
-      const result = await analyzeUserIntentAsync(
-        `Extraia e preencha dados cadastrais da empresa do seguinte texto: "${aiPrompt}". Retorne informações para Nome Fantasia, Razão Social, CNPJ, Ramo, Telefone, Endereço e Chave PIX se disponíveis.`,
-        'EmpresaConfig'
-      );
+      const promptInstruction = `Analise o texto a seguir e extraia os dados cadastrais da empresa de locação. Retorne um JSON com as chaves: "nomeFantasia", "razaoSocial", "cnpj", "ramoAtividade", "telefoneWhatsapp", "email", "endereco", "cidade", "uf", "cep", "pixChave", "valorFretePorKm", "nomeRepresentante".
+Texto: "${aiPrompt}"`;
 
-      // Heurística de extração baseada na resposta da IA
-      const text = result.answer || aiPrompt;
+      let aiAnswerText = '';
+      try {
+        const result = await analyzeUserIntentAsync(promptInstruction, 'EmpresaConfig');
+        aiAnswerText = result.answer || '';
+      } catch (e) {
+        console.warn('Falha na consulta assíncrona da IA:', e);
+      }
+
+      // Extração combinada (JSON da IA + RegEx/NLP heurístico resiliente sobre o texto do usuário)
       const newConfig = { ...formData };
+      const extractedFields: string[] = [];
+      const combinedText = `${aiPrompt}\n${aiAnswerText}`;
 
-      // Procurar CNPJ/CPF no texto
-      const docMatch = aiPrompt.match(/([A-Z0-9]{2}\.?[A-Z0-9]{3}\.?[A-Z0-9]{3}\/?[A-Z0-9]{4}-?[0-9]{2})|(\d{11,14})/i);
-      if (docMatch) {
-        const rawDoc = docMatch[0].replace(/[^a-zA-Z0-9]/g, '');
-        if (rawDoc.length === 14 || rawDoc.length === 11) {
-          newConfig.cnpj = formatarDocumento(rawDoc);
-          newConfig.pixChave = rawDoc;
+      // 1. Tentar parsear blocos JSON na resposta ou prompt
+      const jsonMatches = combinedText.match(/\{[\s\S]*?\}/g);
+      if (jsonMatches) {
+        for (const jm of jsonMatches) {
+          try {
+            const parsed = JSON.parse(jm);
+            if (parsed.nomeFantasia && typeof parsed.nomeFantasia === 'string' && parsed.nomeFantasia.length > 1) {
+              newConfig.nomeFantasia = parsed.nomeFantasia.trim();
+              extractedFields.push('Nome Fantasia');
+            }
+            if (parsed.razaoSocial && typeof parsed.razaoSocial === 'string' && parsed.razaoSocial.length > 1) {
+              newConfig.razaoSocial = parsed.razaoSocial.trim();
+              extractedFields.push('Razão Social');
+            }
+            if (parsed.cnpj && typeof parsed.cnpj === 'string') {
+              const doc = parsed.cnpj.replace(/[^a-zA-Z0-9]/g, '');
+              if (doc.length === 14 || doc.length === 11) {
+                newConfig.cnpj = formatarDocumento(doc);
+                extractedFields.push('CNPJ/CPF');
+              }
+            }
+            if (parsed.telefoneWhatsapp) {
+              const digits = String(parsed.telefoneWhatsapp).replace(/\D/g, '');
+              if (digits.length >= 8) {
+                newConfig.telefoneWhatsapp = digits;
+                extractedFields.push('Telefone/WhatsApp');
+              }
+            }
+            if (parsed.ramoAtividade && typeof parsed.ramoAtividade === 'string') {
+              newConfig.ramoAtividade = parsed.ramoAtividade.trim();
+              extractedFields.push('Ramo');
+            }
+            if (parsed.endereco && typeof parsed.endereco === 'string') {
+              newConfig.endereco = parsed.endereco.trim();
+              extractedFields.push('Endereço');
+            }
+            if (parsed.cidade && typeof parsed.cidade === 'string') {
+              newConfig.cidade = parsed.cidade.trim();
+              extractedFields.push('Cidade');
+            }
+            if (parsed.uf && typeof parsed.uf === 'string') {
+              newConfig.uf = parsed.uf.trim().toUpperCase();
+              extractedFields.push('UF');
+            }
+            if (parsed.cep && typeof parsed.cep === 'string') {
+              newConfig.cep = parsed.cep.trim();
+              extractedFields.push('CEP');
+            }
+            if (parsed.pixChave && typeof parsed.pixChave === 'string') {
+              newConfig.pixChave = parsed.pixChave.trim();
+              extractedFields.push('Chave PIX');
+            }
+            if (parsed.valorFretePorKm !== undefined && parsed.valorFretePorKm !== null) {
+              const val = Number(parsed.valorFretePorKm);
+              if (!isNaN(val) && val >= 0) {
+                newConfig.valorFretePorKm = val;
+                extractedFields.push('Frete por Km');
+              }
+            }
+            if (parsed.nomeRepresentante && typeof parsed.nomeRepresentante === 'string') {
+              newConfig.nomeRepresentante = parsed.nomeRepresentante.trim();
+              extractedFields.push('Representante');
+            }
+          } catch (_) {
+            // Ignora JSON malformado
+          }
         }
       }
 
-      // Procurar Telefone/WhatsApp
-      const phoneMatch = aiPrompt.match(/(\d{2})\s?9?\d{4}-?\d{4}/);
-      if (phoneMatch) {
-        newConfig.telefoneWhatsapp = phoneMatch[0].replace(/\D/g, '');
-      }
-
-      // Tentar capturar nome fantasia se o usuário mencionou
-      const nameMatch = aiPrompt.match(/(?:nome|empresa|locadora|chama-se|chamada|sou a|somos a)\s+([A-Za-z0-9\s&]+?)(?:,|;|\.|\s-|$)/i);
-      if (nameMatch && nameMatch[1]) {
-        const extracted = nameMatch[1].trim();
-        if (extracted.length > 2) {
-          newConfig.nomeFantasia = extracted;
-          newConfig.razaoSocial = `${extracted} Locações e Eventos LTDA`;
+      // 2. Extração NLP Heurística Resiliente sobre aiPrompt
+      // Documento CNPJ / CPF
+      if (!extractedFields.includes('CNPJ/CPF')) {
+        const docMatch = combinedText.match(/([0-9]{2}\.?[0-9]{3}\.?[0-9]{3}\/?[0-9]{4}-?[0-9]{2})|([0-9]{3}\.?[0-9]{3}\.?[0-9]{3}-?[0-9]{2})|(\b\d{11,14}\b)/i);
+        if (docMatch) {
+          const rawDoc = docMatch[0].replace(/\D/g, '');
+          if (rawDoc.length === 14 || rawDoc.length === 11) {
+            newConfig.cnpj = formatarDocumento(rawDoc);
+            if (!newConfig.pixChave) {
+              newConfig.pixChave = rawDoc;
+              newConfig.pixTipoChave = rawDoc.length === 14 ? 'CNPJ' : 'CPF';
+            }
+            extractedFields.push('CNPJ/CPF');
+          }
         }
       }
 
+      // Telefone / WhatsApp
+      if (!extractedFields.includes('Telefone/WhatsApp')) {
+        const phoneMatch = combinedText.match(/(?:tel|telefone|whatsapp|whats|cel|celular)?[\s:]*(?:\+?55\s*)?(?:\(?(\d{2})\)?\s*)?(9?\d{4}[-\s]?\d{4})/i);
+        if (phoneMatch) {
+          const ddd = phoneMatch[1] || '51';
+          const num = phoneMatch[2].replace(/\D/g, '');
+          newConfig.telefoneWhatsapp = `${ddd}${num}`;
+          extractedFields.push('Telefone/WhatsApp');
+        }
+      }
+
+      // E-mail
+      if (!extractedFields.includes('E-mail')) {
+        const emailMatch = combinedText.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i);
+        if (emailMatch) {
+          newConfig.email = emailMatch[1];
+          extractedFields.push('E-mail');
+        }
+      }
+
+      // Frete por Km
+      if (!extractedFields.includes('Frete por Km')) {
+        const freteMatch = combinedText.match(/(?:frete|km|quilômetro|tarifa)[\s:]*(?:r\$\s*)?(\d+(?:[.,]\d+)?)/i);
+        if (freteMatch) {
+          const val = parseFloat(freteMatch[1].replace(',', '.'));
+          if (!isNaN(val) && val >= 0) {
+            newConfig.valorFretePorKm = val;
+            extractedFields.push('Frete por Km');
+          }
+        }
+      }
+
+      // CEP
+      if (!extractedFields.includes('CEP')) {
+        const cepMatch = combinedText.match(/(?:cep)?[\s:]*(\d{5}-?\d{3})/i);
+        if (cepMatch) {
+          newConfig.cep = cepMatch[1];
+          extractedFields.push('CEP');
+        }
+      }
+
+      // Chave PIX
+      if (!extractedFields.includes('Chave PIX')) {
+        const pixMatch = combinedText.match(/(?:pix|chave pix)[\s:]*([^\s,;.]{5,50})/i);
+        if (pixMatch && pixMatch[1]) {
+          const key = pixMatch[1].trim();
+          if (key && !key.toLowerCase().includes('sim') && !key.toLowerCase().includes('nao')) {
+            newConfig.pixChave = key;
+            extractedFields.push('Chave PIX');
+          }
+        }
+      }
+
+      // Nome Fantasia / Razão Social
+      if (!extractedFields.includes('Nome Fantasia')) {
+        const namePatterns = [
+          /(?:nome|fantasia|empresa|locadora|chama-se|chamada|sou a|somos a|nome da empresa)[\s:]+([A-Za-z0-9À-ÿ\s&.-]+?)(?:,|$|\n|;|\.|\s-|\sCNPJ|\sTel|\sWhatsApp)/i,
+          /^(?:Somos a|Sou a|Locadora|Empresa)?\s*([A-Za-z0-9À-ÿ\s&.-]{3,40}?)(?:,|$|\n|;|\.|\sCNPJ|\sTel)/i
+        ];
+
+        for (const pat of namePatterns) {
+          const nameMatch = combinedText.match(pat);
+          if (nameMatch && nameMatch[1]) {
+            let extracted = nameMatch[1].trim();
+            extracted = extracted.replace(/^(somos a|sou a|locadora|empresa)\s+/i, '');
+            if (
+              extracted.length > 2 &&
+              !extracted.toLowerCase().startsWith('cnpj') &&
+              !extracted.toLowerCase().startsWith('tel') &&
+              !extracted.toLowerCase().startsWith('http')
+            ) {
+              newConfig.nomeFantasia = extracted;
+              if (!newConfig.razaoSocial || newConfig.razaoSocial.includes('LTDA')) {
+                newConfig.razaoSocial = `${extracted} Locações e Eventos LTDA`;
+              }
+              extractedFields.push('Nome Fantasia');
+              break;
+            }
+          }
+        }
+      }
+
+      // Endereço
+      if (!extractedFields.includes('Endereço')) {
+        const endMatch = combinedText.match(/(?:endereço|rua|avenida|av|localizada|sediada)[\s:]+([A-Za-z0-9À-ÿ\s,.-]+?)(?:,|$|\n|;|\.|\sCEP|\sCNPJ)/i);
+        if (endMatch && endMatch[1]) {
+          const addr = endMatch[1].trim();
+          if (addr.length > 4) {
+            newConfig.endereco = addr;
+            extractedFields.push('Endereço');
+          }
+        }
+      }
+
+      // Representante
+      if (!extractedFields.includes('Representante')) {
+        const repMatch = combinedText.match(/(?:representante|responsável|proprietário|dono|contato)[\s:]+([A-Za-z0-9À-ÿ\s]+?)(?:,|$|\n|;|\.)/i);
+        if (repMatch && repMatch[1]) {
+          const repName = repMatch[1].trim();
+          if (repName.length > 2) {
+            newConfig.nomeRepresentante = repName;
+            extractedFields.push('Representante');
+          }
+        }
+      }
+
+      const uniqueFields = Array.from(new Set(extractedFields));
       setFormData(newConfig);
-      setAiSuccessMessage('✨ A IA analisou sua descrição e preencheu os campos automaticamente! Verifique os dados abaixo.');
+
+      if (uniqueFields.length > 0) {
+        setAiSuccessMessage(`✨ A IA identificou e preencheu ${uniqueFields.length} campo(s) automaticamente: ${uniqueFields.join(', ')}. Verifique os dados abaixo.`);
+        if (docError) setDocError(null);
+      } else {
+        setAiSuccessMessage('✨ Dados processados pela IA! Verifique e ajuste os campos do formulário abaixo.');
+      }
     } catch (error) {
       console.warn('Erro ao processar preenchimento por IA:', error);
       setAiSuccessMessage('Não foi possível extrair todos os dados automaticamente, mas você pode preencher os campos manualmente abaixo.');
@@ -228,7 +419,7 @@ export const OnboardingIaWizardModal: React.FC<OnboardingIaWizardModalProps> = (
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold text-white tracking-wide">Assistente de Configuração Inicial IA</h2>
+                <h2 className="text-lg font-bold text-white tracking-wide">Assistente de Configuração</h2>
                 <span className="bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/40 text-[10px] font-mono px-2 py-0.5 rounded-full font-bold uppercase">
                   Acervus Core
                 </span>
@@ -310,7 +501,13 @@ export const OnboardingIaWizardModal: React.FC<OnboardingIaWizardModalProps> = (
                     type="text"
                     value={aiPrompt}
                     onChange={(e) => setAiPrompt(e.target.value)}
-                    placeholder="Ex: Somos a Bora Festar, CNPJ 45.678.910/0001-23, WhatsApp 11999998888 em São Paulo..."
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !isAiProcessing && aiPrompt.trim()) {
+                        e.preventDefault();
+                        handleAiAutoFill();
+                      }
+                    }}
+                    placeholder="Ex: Somos a Festas & Eventos Locadora, CNPJ 00.000.000/0001-00, WhatsApp 11987654321..."
                     className="flex-1 bg-[#0A0A0C] border border-[#27272A] focus:border-[#D4AF37] rounded-xl px-3.5 py-2 text-xs text-white placeholder-[#71717A] outline-none transition-colors"
                   />
                   <button
@@ -338,7 +535,7 @@ export const OnboardingIaWizardModal: React.FC<OnboardingIaWizardModalProps> = (
                     type="text"
                     value={formData.nomeFantasia}
                     onChange={(e) => handleFieldChange('nomeFantasia', e.target.value)}
-                    placeholder="Ex: Bora Festar Locações"
+                    placeholder="Ex: Festas & Eventos Locadora"
                     className="w-full bg-[#18181C] border border-[#27272A] focus:border-[#D4AF37] rounded-xl px-3.5 py-2.5 text-xs text-white outline-none transition-colors"
                   />
                 </div>
@@ -351,7 +548,7 @@ export const OnboardingIaWizardModal: React.FC<OnboardingIaWizardModalProps> = (
                     type="text"
                     value={formData.razaoSocial}
                     onChange={(e) => handleFieldChange('razaoSocial', e.target.value)}
-                    placeholder="Ex: Bora Festar Eventos LTDA"
+                    placeholder="Ex: Festas & Eventos Locação LTDA"
                     className="w-full bg-[#18181C] border border-[#27272A] focus:border-[#D4AF37] rounded-xl px-3.5 py-2.5 text-xs text-white outline-none transition-colors"
                   />
                 </div>
@@ -368,7 +565,7 @@ export const OnboardingIaWizardModal: React.FC<OnboardingIaWizardModalProps> = (
                       handleFieldChange('cnpj', formatted);
                       if (docError) setDocError(null);
                     }}
-                    placeholder="Ex: 45.678.910/0001-23 ou 12.ABC.345/0001-95"
+                    placeholder="Ex: 00.000.000/0001-00 ou 12.ABC.345/0001-95"
                     className={`w-full bg-[#18181C] border ${
                       docError ? 'border-red-500' : 'border-[#27272A] focus:border-[#D4AF37]'
                     } rounded-xl px-3.5 py-2.5 text-xs text-white font-mono outline-none transition-colors`}
@@ -399,7 +596,7 @@ export const OnboardingIaWizardModal: React.FC<OnboardingIaWizardModalProps> = (
                       type="text"
                       value={formData.telefoneWhatsapp}
                       onChange={(e) => handleFieldChange('telefoneWhatsapp', e.target.value)}
-                      placeholder="Ex: 5511999998888"
+                      placeholder="Ex: 5511987654321"
                       className="w-full bg-[#18181C] border border-[#27272A] focus:border-[#D4AF37] rounded-xl pl-9 pr-3.5 py-2.5 text-xs text-white font-mono outline-none transition-colors"
                     />
                   </div>
@@ -413,7 +610,7 @@ export const OnboardingIaWizardModal: React.FC<OnboardingIaWizardModalProps> = (
                     type="text"
                     value={formData.nomeRepresentante}
                     onChange={(e) => handleFieldChange('nomeRepresentante', e.target.value)}
-                    placeholder="Ex: Christian Dahmer"
+                    placeholder="Ex: Carlos Silva"
                     className="w-full bg-[#18181C] border border-[#27272A] focus:border-[#D4AF37] rounded-xl px-3.5 py-2.5 text-xs text-white outline-none transition-colors"
                   />
                 </div>
@@ -429,22 +626,6 @@ export const OnboardingIaWizardModal: React.FC<OnboardingIaWizardModalProps> = (
                     placeholder="Ex: gestor@empresa.com.br"
                     className="w-full bg-[#18181C] border border-[#27272A] focus:border-[#D4AF37] rounded-xl px-3.5 py-2.5 text-xs text-white outline-none transition-colors"
                   />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-[#A1A1AA] mb-1">
-                    Senha de Acesso (Senha Padrão)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.senhaAcesso || '123456'}
-                    onChange={(e) => handleFieldChange('senhaAcesso', e.target.value)}
-                    placeholder="Ex: 123456"
-                    className="w-full bg-[#18181C] border border-[#27272A] focus:border-[#D4AF37] rounded-xl px-3.5 py-2.5 text-xs text-white font-mono outline-none transition-colors"
-                  />
-                  <p className="text-[10px] text-[#71717A] mt-1">
-                    Defina uma senha de acesso. Por padrão, sugerimos "123456" para o primeiro login.
-                  </p>
                 </div>
               </div>
             </div>
@@ -635,7 +816,7 @@ export const OnboardingIaWizardModal: React.FC<OnboardingIaWizardModalProps> = (
                     type="text"
                     value={formData.bancoBeneficiario || ''}
                     onChange={(e) => handleFieldChange('bancoBeneficiario', e.target.value)}
-                    placeholder="Ex: Bora Festar Eventos"
+                    placeholder="Ex: Festas & Eventos Locação LTDA"
                     className="w-full bg-[#18181C] border border-[#27272A] focus:border-[#D4AF37] rounded-xl px-3.5 py-2.5 text-xs text-white outline-none transition-colors"
                   />
                 </div>

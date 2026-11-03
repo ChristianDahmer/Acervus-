@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, lazy, Suspense } from 'react';
+import { SYSTEM_VERSION } from './config/version';
 import { Cliente, FormularioWeb, ItemAcervo, ReservaComItens, StatusCicloVenda, StatusReserva, EmpresaConfig, ThemeConfig, GoogleAccountConfig, CategoriaItem, TransacaoFinanceira, RegistroManutencao, DispositivoAutorizado, ModeloContrato } from './types';
 import { INITIAL_CLIENTES, INITIAL_ITENS, INITIAL_RESERVAS, INITIAL_EMPRESA_CONFIG, INITIAL_THEME_CONFIG, INITIAL_CATEGORIAS, INITIAL_FINANCE_TRANSACTIONS, INITIAL_MAINTENANCE_LOGS, INITIAL_MODELOS_CONTRATO } from './data/initialData';
 import { applyThemeToDocument } from './utils/themeUtils';
@@ -14,7 +15,8 @@ import {
   saveLocalCollection,
   getLocalCollection,
   getTenantCollectionName,
-  getActiveTenantId
+  getActiveTenantId,
+  isMasterUser
 } from './lib/firebaseSync';
 import { onSnapshot, collection } from 'firebase/firestore';
 import { db } from './lib/firebase';
@@ -22,6 +24,8 @@ import { checkAndRunDailyAutoBackup } from './lib/googleDriveBackup';
 import { getAppLogoUrl, handleLogoError } from './utils/logoUtils';
 import { AcervusSystemLogo } from './components/AcervusSystemLogo';
 import { ViewSkeleton } from './components/ViewSkeleton';
+import { LockScreen } from './components/LockScreen';
+import { OfflineIndicator } from './components/OfflineIndicator';
 
 // Code-Splitting & Lazy Loading de Telas para Carregamento e Troca Sub-50ms
 const InventarioView = lazy(() => import('./components/InventarioView').then(m => ({ default: m.InventarioView })));
@@ -32,7 +36,6 @@ const FinanceiroView = lazy(() => import('./components/FinanceiroView').then(m =
 const ManutencaoView = lazy(() => import('./components/ManutencaoView').then(m => ({ default: m.ManutencaoView })));
 const RelatoriosView = lazy(() => import('./components/RelatoriosView').then(m => ({ default: m.RelatoriosView })));
 const PropostaOrcamentoView = lazy(() => import('./components/PropostaOrcamentoView').then(m => ({ default: m.PropostaOrcamentoView })));
-const LockScreen = lazy(() => import('./components/LockScreen').then(m => ({ default: m.LockScreen })));
 const NovaReservaModal = lazy(() => import('./components/NovaReservaModal').then(m => ({ default: m.NovaReservaModal })));
 const ContratoPdfModal = lazy(() => import('./components/ContratoPdfModal').then(m => ({ default: m.ContratoPdfModal })));
 const WhatsAppModal = lazy(() => import('./components/WhatsAppModal').then(m => ({ default: m.WhatsAppModal })));
@@ -81,11 +84,46 @@ export default function App() {
 
   // State
   const [isLoading, setIsLoading] = useState(true);
+  const [isFadingOut, setIsFadingOut] = useState(false);
+
+  const finishLoading = () => {
+    setIsFadingOut(true);
+    setTimeout(() => {
+      setIsLoading(false);
+      setIsFadingOut(false);
+    }, 300);
+  };
+
   const [loadingStep, setLoadingStep] = useState<string>('Inicializando os serviços do Acervus...');
   const [loadingProgress, setLoadingProgress] = useState<number>(5);
   const [loadingLogs, setLoadingLogs] = useState<string[]>([]);
   const [currentLog, setCurrentLog] = useState<string>('[Kernel] Inicializando serviços do Acervus...');
   const [empresaConfig, setEmpresaConfig] = useState<EmpresaConfig>(INITIAL_EMPRESA_CONFIG);
+
+  // Synchronize document title, favicon, and apple-touch-icon with empresaConfig and system logo
+  useEffect(() => {
+    const nome = empresaConfig?.nomeFantasia || 'Acervus';
+    const logo = getAppLogoUrl(empresaConfig?.logoUrl);
+    
+    document.title = `${nome} - Gestão de Decorações & Eventos`;
+
+    let linkIcon = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
+    if (!linkIcon) {
+      linkIcon = document.createElement('link');
+      linkIcon.type = 'image/png';
+      linkIcon.rel = 'shortcut icon';
+      document.getElementsByTagName('head')[0].appendChild(linkIcon);
+    }
+    linkIcon.href = logo;
+
+    let appleIcon = document.querySelector("link[rel='apple-touch-icon']") as HTMLLinkElement;
+    if (!appleIcon) {
+      appleIcon = document.createElement('link');
+      appleIcon.rel = 'apple-touch-icon';
+      document.getElementsByTagName('head')[0].appendChild(appleIcon);
+    }
+    appleIcon.href = logo;
+  }, [empresaConfig]);
   const [themeConfig, setThemeConfig] = useState<ThemeConfig>(INITIAL_THEME_CONFIG);
   const [itens, setItens] = useState<ItemAcervo[]>([]);
   const [categorias, setCategorias] = useState<CategoriaItem[]>([]);
@@ -98,11 +136,11 @@ export default function App() {
         return null;
       }
 
-      const saved = localStorage.getItem('locadora_authenticated_device');
+       const saved = localStorage.getItem('locadora_authenticated_device');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.status === 'APROVADO') {
-          if (parsed.cnpjEmpresa) {
+          if (parsed.cnpjEmpresa && !isMasterUser(parsed)) {
             localStorage.setItem('locadora_last_active_tenant', parsed.cnpjEmpresa.replace(/\D/g, ''));
           }
           // Verificar validade de inatividade (24 Horas de Segurança)
@@ -397,7 +435,7 @@ export default function App() {
     // Absolute global safety timer to guarantee bootloader completion (Max 3.5s)
     const globalSafetyTimer = setTimeout(() => {
       console.info('[Android Bootloader] Timeout global de inicialização (3.5s). Desativando splash screen com fallback.');
-      setIsLoading(false);
+      finishLoading();
     }, 3500);
 
     async function loadData() {
@@ -676,7 +714,7 @@ export default function App() {
         console.error('Fatal crash on loader loop:', err);
       } finally {
         clearTimeout(globalSafetyTimer);
-        setIsLoading(false);
+        finishLoading();
       }
     }
     loadData();
@@ -1044,8 +1082,10 @@ export default function App() {
     // Retemos o UUID para preservar a identidade única do dispositivo físico no sistema
     localStorage.removeItem('locadora_authenticated_device');
     localStorage.removeItem('locadora_active_url_tenant');
+    localStorage.removeItem('locadora_last_active_tenant');
     localStorage.setItem('locadora_logged_off', 'true');
     setAuthenticatedDevice(null);
+    setEmpresaConfig(INITIAL_EMPRESA_CONFIG);
   };
 
   const handleUpdateItemCategoria = (oldName: string, newName: string) => {
@@ -1100,11 +1140,11 @@ export default function App() {
 
   // Google Account & Workspace OAuth State
   const [googleAccount, setGoogleAccount] = useState<GoogleAccountConfig>({
-    isConnected: true,
-    email: 'locadora.borafestar@gmail.com',
-    displayName: 'Bora Festar Locações (Drive)',
-    photoUrl: 'https://lh3.googleusercontent.com/a/default-user',
-    driveFolderId: '1drive_folder_borafestar_2026',
+    isConnected: false,
+    email: '',
+    displayName: '',
+    photoUrl: '',
+    driveFolderId: '',
     scopesGranted: [
       'https://www.googleapis.com/auth/drive.file',
       'https://www.googleapis.com/auth/forms.body',
@@ -2046,9 +2086,27 @@ export default function App() {
     }
   };
 
-  if (isLoading) {
+  if (urlPropostaId) {
     return (
-      <div className="min-h-screen bg-[#0A0A0B] text-[#E4E4E7] font-sans flex flex-col justify-center items-center p-6 select-none">
+      <Suspense fallback={<ViewSkeleton title="Proposta de Orçamento" />}>
+        <PropostaOrcamentoView
+          propostaId={urlPropostaId}
+          webForms={webForms}
+          itens={itens}
+          empresaConfig={empresaConfig}
+          themeConfig={themeConfig}
+          onConfirmProposal={handleConfirmProposal}
+          onRejectProposal={handleRejectProposal}
+          onUpdateProposalText={handleUpdateProposalText}
+        />
+      </Suspense>
+    );
+  }
+
+  const renderBootOverlay = () => {
+    if (!isLoading) return null;
+    return (
+      <div className={`fixed inset-0 z-50 bg-[#0A0A0B] text-[#E4E4E7] font-sans flex flex-col justify-center items-center p-6 select-none transition-opacity duration-300 ${isFadingOut ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div className="w-full max-w-md bg-[#111113] border border-[#27272A] rounded-3xl p-8 shadow-2xl flex flex-col items-center space-y-6 relative overflow-hidden">
           
           {/* Top aesthetic linear accent */}
@@ -2065,7 +2123,12 @@ export default function App() {
             </div>
 
             <div>
-              <h1 className="font-serif italic text-2xl text-white font-bold tracking-tight">Acervus Core</h1>
+              <div className="flex items-center justify-center gap-2">
+                <h1 className="font-serif italic text-2xl text-white font-bold tracking-tight">Acervus Core</h1>
+                <span className="text-[10px] font-mono text-[#D4AF37] bg-[#D4AF37]/10 border border-[#D4AF37]/30 px-2.5 py-0.5 rounded-full font-bold">
+                  {SYSTEM_VERSION}
+                </span>
+              </div>
               <p className="text-[10px] uppercase tracking-widest text-[#D4AF37] font-semibold font-mono mt-1">
                 Inicialização & Sincronização Multi-Tenant
               </p>
@@ -2095,9 +2158,8 @@ export default function App() {
             </span>
           </div>
 
-          {/* Bloco de Log de Inicialização (Mantido sem a label superior conforme solicitado) */}
+          {/* Bloco de Log de Inicialização */}
           <div className="w-full py-1 text-center flex flex-col items-center justify-center gap-1.5">
-            {/* ALTERADO: Label "Log de Inicialização" removido cirurgicamente mantendo o bloco visual abaixo */}
             <div className="inline-flex items-center justify-center gap-2 max-w-full bg-[#08080A] border border-[#27272A] px-4 py-2 rounded-xl text-xs font-mono text-[#D4AF37] shadow-lg transition-all duration-200">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
               <span className="text-white font-medium truncate max-w-[280px] sm:max-w-[380px]">
@@ -2161,7 +2223,7 @@ export default function App() {
                       <button
                         onClick={() => {
                           setLoadingLogs((prev) => [...prev, '[System Engine] Forçando boot em modo de contingência local...']);
-                          setIsLoading(false);
+                          finishLoading();
                         }}
                         className="py-1.5 px-2 bg-[#27272A] hover:bg-[#3F3F46] border border-[#3F3F46] text-white text-[9px] font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer"
                       >
@@ -2183,7 +2245,7 @@ export default function App() {
                 ) : (
                   <div className="grid grid-cols-2 gap-2">
                     <button
-                      onClick={() => setIsLoading(false)}
+                      onClick={() => finishLoading()}
                       className="py-2 px-2 bg-[#D4AF37] hover:bg-[#E5C158] text-black text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer"
                     >
                       <span>Entrar Offline</span>
@@ -2202,38 +2264,43 @@ export default function App() {
           )}
 
         </div>
+
+        {/* Footer System Version Badge */}
+        <div className="mt-4 text-center">
+          <span className="text-[11px] font-mono text-[#71717A] flex items-center justify-center gap-1.5">
+            <span>Acervus Core</span>
+            <span className="text-[#D4AF37] font-bold bg-[#D4AF37]/10 border border-[#D4AF37]/20 px-2 py-0.5 rounded-md">
+              {SYSTEM_VERSION}
+            </span>
+            <span>• Gestão Inteligente de Acervos</span>
+          </span>
+        </div>
       </div>
     );
-  }
-
-  if (urlPropostaId) {
-    return (
-      <Suspense fallback={<ViewSkeleton title="Proposta de Orçamento" />}>
-        <PropostaOrcamentoView
-          propostaId={urlPropostaId}
-          webForms={webForms}
-          itens={itens}
-          empresaConfig={empresaConfig}
-          themeConfig={themeConfig}
-          onConfirmProposal={handleConfirmProposal}
-          onRejectProposal={handleRejectProposal}
-          onUpdateProposalText={handleUpdateProposalText}
-        />
-      </Suspense>
-    );
-  }
+  };
 
   if (!authenticatedDevice) {
     return (
-      <Suspense fallback={<ViewSkeleton title="Autenticação" />}>
+      <>
+        {renderBootOverlay()}
         <LockScreen
           empresaConfig={empresaConfig}
-          onAuthenticated={(device, isNewClient) => {
+          onAuthenticated={async (device, isNewClient) => {
             localStorage.removeItem('locadora_logged_off');
             localStorage.setItem('locadora_device_uuid', device.id);
             localStorage.setItem('locadora_authenticated_device', JSON.stringify(device));
             if (device.cnpjEmpresa) {
-              localStorage.setItem('locadora_last_active_tenant', device.cnpjEmpresa.replace(/\D/g, ''));
+              const cleanCnpj = device.cnpjEmpresa.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+              if (cleanCnpj && cleanCnpj !== '00000000000000') {
+                localStorage.setItem('locadora_last_active_tenant', cleanCnpj);
+                try {
+                  const loadedCfg = await getConfig<EmpresaConfig>('empresaConfig', INITIAL_EMPRESA_CONFIG);
+                  if (loadedCfg) {
+                    loadedCfg.logoUrl = getAppLogoUrl(loadedCfg.logoUrl);
+                    setEmpresaConfig(loadedCfg);
+                  }
+                } catch (e) {}
+              }
             }
             setAuthenticatedDevice(device);
             setDispositivos((prev) => {
@@ -2253,12 +2320,13 @@ export default function App() {
           onRefreshDispositivos={handleRefreshDispositivos}
           onUpdateEmpresaConfig={(newCfg) => setEmpresaConfig(newCfg)}
         />
-      </Suspense>
+      </>
     );
   }
 
   return (
     <div className="min-h-screen bg-[#0A0A0B] text-[#E4E4E7] font-sans flex flex-col selection:bg-[#D4AF37]/30 selection:text-white">
+      {renderBootOverlay()}
       {/* Top Navbar */}
       <Navbar
         activeTab={activeTab}
@@ -2523,27 +2591,7 @@ export default function App() {
           <OnboardingIaWizardModal
             isOpen={isOnboardingOpen}
             onClose={() => setIsOnboardingOpen(false)}
-            empresaConfig={isOnboardingOpen ? {
-              nomeFantasia: '',
-              razaoSocial: '',
-              cnpj: '',
-              enderecoCompleto: '',
-              telefoneWhatsapp: '',
-              nomeRepresentante: '',
-              listVisibility: {
-                exibirInventarioPorPadrao: true,
-                exibirCategoriasPorPadrao: true,
-                exibirClientesPorPadrao: true,
-                exibirReservasPorPadrao: true,
-              },
-              tabDisplay: {
-                abaPrincipalId: 'inventario',
-                abasFixadas: ['inventario', 'reservas'],
-                ordemAbas: ['inventario', 'reservas'],
-                abasOcultas: [],
-                nomesAbas: {},
-              },
-            } : empresaConfig}
+            empresaConfig={empresaConfig}
             onSaveEmpresaConfig={handleSaveEmpresaConfig}
           />
         )}
@@ -2582,10 +2630,17 @@ export default function App() {
       {/* Footer */}
       <footer className="border-t border-[#27272A] bg-[#0A0A0B] py-6 text-center text-xs text-[#71717A]">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center gap-2">
-          <span>Locadora Pro — Gestão Profissional de Aluguel de Decorações</span>
+          <div className="flex items-center gap-2">
+            <span>Acervus Core — Gestão Inteligente de Acervos & Reservas</span>
+            <span className="font-mono text-[#D4AF37] bg-[#D4AF37]/10 border border-[#D4AF37]/20 px-2 py-0.5 rounded-md font-bold text-[10px]">
+              {SYSTEM_VERSION}
+            </span>
+          </div>
           <span className="font-mono text-[#D4AF37]/80">Acervo • Reservas • Contratos PDF • WhatsApp</span>
         </div>
       </footer>
+      {/* Indicador de Status Offline / PWA */}
+      <OfflineIndicator />
     </div>
   );
 }

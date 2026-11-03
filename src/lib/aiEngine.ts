@@ -908,3 +908,28 @@ export async function enhancePhotoAsync(params: {
 
   return response.json();
 }
+
+export interface DescribeItemAIResponse {
+  descricao: string;
+  nomeSugerido: string;
+  categoriaSugerida: string;
+}
+
+export async function describeItemWithAIAsync(params: {
+  imageBase64: string;
+  itemNome?: string;
+}): Promise<DescribeItemAIResponse> {
+  const response = await fetch('/api/gemini/describe-item', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Falha ao gerar descrição do item com Gemini.');
+  }
+
+  return response.json();
+}
+

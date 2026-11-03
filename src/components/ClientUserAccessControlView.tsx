@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { EmpresaConfig, DispositivoAutorizado } from '../types';
-import { saveDocument } from '../lib/firebaseSync';
+import { saveDocument, MASTER_USER_ACERVUS, isMasterUser } from '../lib/firebaseSync';
 import { 
   Users, 
   Smartphone, 
@@ -22,7 +22,8 @@ import {
   User, 
   Info,
   Key,
-  Layers
+  Layers,
+  Crown
 } from 'lucide-react';
 
 interface ClientUserAccessControlProps {
@@ -69,19 +70,39 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
     setIsAddModalOpen(true);
   };
 
-  // Estatísticas de Operadores e Dispositivos do Tenant
-  const totalUsuarios = dispositivosAutorizados.length;
-  const activeDevicesCount = dispositivosAutorizados.filter((d) => d.status === 'APROVADO').length;
-  const revokedDevicesCount = dispositivosAutorizados.filter((d) => d.status === 'REVOGADO' || d.status === 'REJEITADO').length;
-  const pendingDevicesCount = dispositivosAutorizados.filter((d) => d.status === 'PENDENTE').length;
+  // Lista unificada garantindo presença do Usuário Mestre Acervus e deduplicação estrita
+  const allUsersWithMaster = React.useMemo(() => {
+    const uniqueMap = new Map<string, DispositivoAutorizado>();
 
-  const devsCount = dispositivosAutorizados.filter((d) => d.nivelAcesso === 'DESENVOLVEDOR').length;
-  const adminsCount = dispositivosAutorizados.filter((d) => d.nivelAcesso === 'ADMINISTRADOR').length;
-  const gerentesCount = dispositivosAutorizados.filter((d) => d.nivelAcesso === 'GERENTE').length;
-  const operadoresCount = dispositivosAutorizados.filter((d) => d.nivelAcesso === 'OPERADOR' || !d.nivelAcesso).length;
+    (dispositivosAutorizados || []).forEach((d) => {
+      if (!d) return;
+      const key = d.id || d.device_id || d.hardwareId || (d.usuarioEmail ? `email-${d.usuarioEmail.toLowerCase()}` : null) || (d.usuarioNome ? `nome-${d.usuarioNome.toLowerCase()}` : null) || d.impressaoDigital;
+      if (key && !uniqueMap.has(key)) {
+        uniqueMap.set(key, d);
+      }
+    });
+
+    const hasMaster = Array.from(uniqueMap.values()).some((d) => isMasterUser(d));
+    if (!hasMaster) {
+      uniqueMap.set(MASTER_USER_ACERVUS.id, MASTER_USER_ACERVUS);
+    }
+
+    return Array.from(uniqueMap.values());
+  }, [dispositivosAutorizados]);
+
+  // Estatísticas de Operadores e Dispositivos do Tenant
+  const totalUsuarios = allUsersWithMaster.length;
+  const activeDevicesCount = allUsersWithMaster.filter((d) => d.status === 'APROVADO').length;
+  const revokedDevicesCount = allUsersWithMaster.filter((d) => d.status === 'REVOGADO' || d.status === 'REJEITADO').length;
+  const pendingDevicesCount = allUsersWithMaster.filter((d) => d.status === 'PENDENTE').length;
+
+  const devsCount = allUsersWithMaster.filter((d) => d.nivelAcesso === 'DESENVOLVEDOR' || isMasterUser(d)).length;
+  const adminsCount = allUsersWithMaster.filter((d) => d.nivelAcesso === 'ADMINISTRADOR').length;
+  const gerentesCount = allUsersWithMaster.filter((d) => d.nivelAcesso === 'GERENTE').length;
+  const operadoresCount = allUsersWithMaster.filter((d) => d.nivelAcesso === 'OPERADOR' || !d.nivelAcesso).length;
 
   // Filtragem de Usuários / Operadores da Empresa Contratante
-  const filteredUsers = dispositivosAutorizados.filter((d) => {
+  const filteredUsers = allUsersWithMaster.filter((d) => {
     // Filtro por Status
     if (statusFilter === 'APROVADO' && d.status !== 'APROVADO') return false;
     if (statusFilter === 'REVOGADO' && d.status !== 'REVOGADO' && d.status !== 'REJEITADO') return false;
@@ -420,6 +441,7 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
           </div>
         ) : (
           filteredUsers.map((dispositivo, idx) => {
+            const isMaster = isMasterUser(dispositivo);
             const isApproved = dispositivo.status === 'APROVADO';
             const isRevoked = dispositivo.status === 'REVOGADO' || dispositivo.status === 'REJEITADO';
             const userRole = dispositivo.nivelAcesso || 'OPERADOR';
@@ -429,7 +451,9 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
               <div
                 key={`${dispositivo.id || 'usr'}-${idx}`}
                 className={`bg-[#111113] border rounded-2xl p-4 shadow-xl transition-all space-y-3 ${
-                  isApproved 
+                  isMaster
+                    ? 'border-[#D4AF37] bg-[#D4AF37]/5 shadow-[#D4AF37]/10'
+                    : isApproved 
                     ? 'border-[#27272A] hover:border-[#D4AF37]/40' 
                     : isRevoked 
                     ? 'border-red-500/40 bg-red-950/10' 
@@ -441,9 +465,16 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                        <User size={15} className="text-[#D4AF37]" />
+                        {isMaster ? <Crown size={15} className="text-[#D4AF37] animate-pulse" /> : <User size={15} className="text-[#D4AF37]" />}
                         {nomeOperador}
                       </h3>
+
+                      {/* Master Badge */}
+                      {isMaster && (
+                        <span className="bg-[#D4AF37]/20 border border-[#D4AF37]/50 text-[#D4AF37] font-bold text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1 shadow-sm">
+                          👑 MESTRE GLOBAL (TODOS OS TENANTS)
+                        </span>
+                      )}
 
                       {/* Status Badge */}
                       {isApproved ? (
@@ -462,15 +493,17 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
 
                       {/* Role Selector Badge */}
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${
+                        isMaster ? 'bg-[#D4AF37]/20 text-[#D4AF37] border-[#D4AF37]/40' :
                         userRole === 'DESENVOLVEDOR' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
                         userRole === 'ADMINISTRADOR' ? 'bg-blue-500/10 text-blue-400 border-blue-500/30' :
                         userRole === 'GERENTE' ? 'bg-amber-500/10 text-amber-400 border-amber-500/30' :
                         'bg-zinc-800 text-zinc-300 border-zinc-700'
                       }`}>
-                        {userRole === 'DESENVOLVEDOR' && '💻 Desenvolvedor Android'}
-                        {userRole === 'ADMINISTRADOR' && '🛡️ Administrador'}
-                        {userRole === 'GERENTE' && '💼 Gerente'}
-                        {userRole === 'OPERADOR' && '👤 Operador'}
+                        {isMaster && '👑 Administrador Mestre Root'}
+                        {!isMaster && userRole === 'DESENVOLVEDOR' && '💻 Desenvolvedor Android'}
+                        {!isMaster && userRole === 'ADMINISTRADOR' && '🛡️ Administrador'}
+                        {!isMaster && userRole === 'GERENTE' && '💼 Gerente'}
+                        {!isMaster && userRole === 'OPERADOR' && '👤 Operador'}
                       </span>
                     </div>
 
@@ -489,38 +522,46 @@ export const ClientUserAccessControlView: React.FC<ClientUserAccessControlProps>
 
                   {/* Actions & Role Dropdown */}
                   <div className="flex flex-wrap items-center gap-2">
-                    {/* Alterar Perfil */}
-                    <select
-                      value={userRole}
-                      onChange={(e) => handleChangeUserRole(dispositivo, e.target.value as any)}
-                      className="bg-[#18181B] border border-[#27272A] text-white text-xs font-semibold px-2.5 py-1.5 rounded-xl focus:border-[#D4AF37] focus:outline-none cursor-pointer"
-                      title="Alterar Nível de Acesso do Operador"
-                    >
-                      <option value="OPERADOR">👤 Operador</option>
-                      <option value="GERENTE">💼 Gerente</option>
-                      <option value="ADMINISTRADOR">🛡️ Administrador</option>
-                      <option value="DESENVOLVEDOR">💻 Desenvolvedor</option>
-                    </select>
-
-                    {/* Revogar / Aprovar Botões */}
-                    {isApproved ? (
-                      <button
-                        type="button"
-                        onClick={() => handleRevokeDevice(dispositivo)}
-                        className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <UserX size={13} />
-                        <span>Revogar Acesso</span>
-                      </button>
+                    {isMaster ? (
+                      <span className="text-[11px] text-[#D4AF37] font-semibold px-3 py-1.5 bg-[#18181B] border border-[#D4AF37]/30 rounded-xl">
+                        🔒 Gestão Plena & Acesso Total
+                      </span>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleApproveDevice(dispositivo)}
-                        className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <UserCheck size={13} />
-                        <span>Autorizar / Aprovar</span>
-                      </button>
+                      <>
+                        {/* Alterar Perfil */}
+                        <select
+                          value={userRole}
+                          onChange={(e) => handleChangeUserRole(dispositivo, e.target.value as any)}
+                          className="bg-[#18181B] border border-[#27272A] text-white text-xs font-semibold px-2.5 py-1.5 rounded-xl focus:border-[#D4AF37] focus:outline-none cursor-pointer"
+                          title="Alterar Nível de Acesso do Operador"
+                        >
+                          <option value="OPERADOR">👤 Operador</option>
+                          <option value="GERENTE">💼 Gerente</option>
+                          <option value="ADMINISTRADOR">🛡️ Administrador</option>
+                          <option value="DESENVOLVEDOR">💻 Desenvolvedor</option>
+                        </select>
+
+                        {/* Revogar / Aprovar Botões */}
+                        {isApproved ? (
+                          <button
+                            type="button"
+                            onClick={() => handleRevokeDevice(dispositivo)}
+                            className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <UserX size={13} />
+                            <span>Revogar Acesso</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleApproveDevice(dispositivo)}
+                            className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <UserCheck size={13} />
+                            <span>Autorizar / Aprovar</span>
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

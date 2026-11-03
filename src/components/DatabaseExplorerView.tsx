@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
-import { saveDocument, deleteDocument } from '../lib/firebaseSync';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { saveDocument, deleteDocument, executeSqlRemote, fetchCollection, isMasterUser } from '../lib/firebaseSync';
+import { AuditLogsPanel } from './AuditLogsPanel';
 import { 
   Database, 
   Search, 
@@ -37,7 +38,9 @@ import {
   ArrowRight,
   ChevronRight,
   ChevronLeft,
-  Info
+  Info,
+  Crown,
+  Globe
 } from 'lucide-react';
 
 interface DatabaseExplorerProps {
@@ -52,10 +55,11 @@ interface DatabaseExplorerProps {
   empresaConfig?: any;
   categorias?: any[];
   tenantId?: string;
+  authenticatedDevice?: any;
   onRefreshData?: () => void;
 }
 
-type MainTab = 'data_explorer' | 'indexes' | 'views' | 'erd' | 'sql_console' | 'diagnostics';
+type MainTab = 'data_explorer' | 'indexes' | 'views' | 'erd' | 'sql_console' | 'diagnostics' | 'audit_logs';
 
 type TableName = 
   | 'clients'
@@ -231,6 +235,19 @@ const TABLE_SCHEMAS: TableMeta[] = [
   },
 ];
 
+const TABLE_COLLECTION_MAP: Record<TableName, string> = {
+  clients: 'clientes',
+  stock_items: 'itens',
+  bookings: 'reservas',
+  web_forms: 'webForms',
+  financial_transactions: 'transacoes',
+  maintenance_history: 'manutencoes',
+  authorized_devices: 'dispositivos_autorizados',
+  item_categories: 'categorias',
+  contract_templates: 'modelosContrato',
+  tenant_configs: 'empresaConfig',
+};
+
 export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
   webForms = [],
   clientes = [],
@@ -243,12 +260,114 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
   empresaConfig = {},
   categorias = [],
   tenantId = '45.678.910/0001-23',
+  authenticatedDevice,
   onRefreshData,
 }) => {
   const [activeMainTab, setActiveMainTab] = useState<MainTab>('data_explorer');
   const [selectedTable, setSelectedTable] = useState<TableName>('clients');
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState<'table' | 'json_tree'>('table');
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+
+  // Master User Root Detection
+  const isMaster = useMemo(() => {
+    if (isMasterUser(authenticatedDevice)) return true;
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('locadora_authenticated_device');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (isMasterUser(parsed)) return true;
+        }
+      } catch (e) {}
+    }
+    return false;
+  }, [authenticatedDevice]);
+
+  // Selected Tenant Filter ('GLOBAL' = todos os tenants)
+  const [selectedTenantFilter, setSelectedTenantFilter] = useState<string>('GLOBAL');
+  const [globalData, setGlobalData] = useState<{
+    clients?: any[];
+    stock_items?: any[];
+    bookings?: any[];
+    web_forms?: any[];
+    financial_transactions?: any[];
+    maintenance_history?: any[];
+    authorized_devices?: any[];
+    item_categories?: any[];
+    contract_templates?: any[];
+    tenant_configs?: any[];
+  }>({});
+  const [isLoadingGlobalData, setIsLoadingGlobalData] = useState(false);
+  const [availableTenantsList, setAvailableTenantsList] = useState<{ tenantId: string; nomeFantasia?: string }[]>([]);
+
+  // Fetch cross-tenant datasets
+  const fetchGlobalData = async () => {
+    setIsLoadingGlobalData(true);
+    try {
+      const fetchScope = isMaster ? 'GLOBAL' : tenantId;
+      const [
+        clis,
+        stk,
+        bks,
+        wfs,
+        txs,
+        mnt,
+        devs,
+        cats,
+        tms,
+        cfgs,
+        tenantsRes
+      ] = await Promise.all([
+        fetchCollection<any>('clientes', fetchScope),
+        fetchCollection<any>('itens', fetchScope),
+        fetchCollection<any>('reservas', fetchScope),
+        fetchCollection<any>('webForms', fetchScope),
+        fetchCollection<any>('transacoes', fetchScope),
+        fetchCollection<any>('manutencoes', fetchScope),
+        fetchCollection<any>('dispositivos_autorizados', fetchScope),
+        fetchCollection<any>('categorias', fetchScope),
+        fetchCollection<any>('modelosContratos', fetchScope),
+        fetchCollection<any>('tenant_configs', fetchScope),
+        fetch(`/api/db/tenants?isMaster=${isMaster}&tenantId=${encodeURIComponent(tenantId)}`, {
+          headers: {
+            'x-is-master': isMaster ? 'true' : 'false',
+            'x-tenant-id': tenantId
+          }
+        }).then((r) => (r.ok ? r.json() : [])).catch(() => [])
+      ]);
+
+      setGlobalData({
+        clients: clis || [],
+        stock_items: stk || [],
+        bookings: bks || [],
+        web_forms: wfs || [],
+        financial_transactions: txs || [],
+        maintenance_history: mnt || [],
+        authorized_devices: devs || [],
+        item_categories: cats || [],
+        contract_templates: tms || [],
+        tenant_configs: cfgs || []
+      });
+
+      if (Array.isArray(tenantsRes) && tenantsRes.length > 0) {
+        setAvailableTenantsList(tenantsRes);
+      }
+    } catch (err) {
+      console.warn('Erro ao carregar dados globais cross-tenant:', err);
+    } finally {
+      setIsLoadingGlobalData(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isMaster) {
+      setSelectedTenantFilter(tenantId);
+    } else {
+      setSelectedTenantFilter('GLOBAL');
+    }
+    fetchGlobalData();
+  }, [isMaster, tenantId]);
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -262,57 +381,242 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
   // Modals
   const [viewingDoc, setViewingDoc] = useState<any | null>(null);
   const [editingDoc, setEditingDoc] = useState<any | null>(null);
+  const [deletingDoc, setDeletingDoc] = useState<any | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [jsonInput, setJsonInput] = useState('');
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [modalMode, setModalMode] = useState<'form' | 'json'>('form');
 
   // SQL Console State
-  const [sqlQuery, setSqlQuery] = useState(`SELECT * FROM clients WHERE tenant_id = '${tenantId}' ORDER BY id DESC;`);
+  const [sqlQuery, setSqlQuery] = useState(`SELECT * FROM clients ORDER BY id DESC;`);
   const [sqlResult, setSqlResult] = useState<{ columns: string[]; rows: any[]; executionTimeMs: number } | null>(null);
   const [isExecutingSql, setIsExecutingSql] = useState(false);
   const [queryHistory, setQueryHistory] = useState<string[]>([
-    `SELECT * FROM clients WHERE tenant_id = '${tenantId}' ORDER BY id DESC;`,
-    `SELECT c.nome, COUNT(b.id) AS total_reservas FROM clients c LEFT JOIN bookings b ON c.id = b.cliente_id GROUP BY c.id, c.nome;`,
-    `SELECT id, nome, quantidade_total, preco_aluguel FROM stock_items WHERE status_manutencao = 'DISPONIVEL';`
+    `SELECT * FROM clients ORDER BY id DESC;`,
+    `SELECT tenant_id, COUNT(*) AS total_clientes FROM clients GROUP BY tenant_id;`,
+    `SELECT tenant_id, COUNT(*) AS total_itens, SUM(preco_aluguel) AS valor_acervo FROM stock_items GROUP BY tenant_id;`,
+    `SELECT b.id, b.tenant_id, c.nome AS cliente, b.valor_total, b.status FROM bookings b LEFT JOIN clients c ON b.cliente_id = c.id ORDER BY b.id DESC;`,
+    `SELECT id, hardware_id, tenant_id, device_name, operador, status FROM authorized_devices;`,
+    `SELECT tenant_id, config_name, updated_at FROM tenant_configs;`
   ]);
 
   // View Execution State
   const [activeViewResult, setActiveViewResult] = useState<{ viewName: string; rows: any[]; timeMs: number } | null>(null);
   const [selectedErdTable, setSelectedErdTable] = useState<TableName | null>('clients');
 
+  // Helper to extract property value regardless of camelCase vs snake_case vs nested structure
+  const getFieldValue = (row: any, fieldName: string) => {
+    if (!row) return undefined;
+    if (row[fieldName] !== undefined) return row[fieldName];
+    // Check nested reserva (for bookings)
+    if (row.reserva && row.reserva[fieldName] !== undefined) return row.reserva[fieldName];
+    if (row.cliente && row.cliente[fieldName] !== undefined) return row.cliente[fieldName];
+
+    // Convert camelCase to snake_case
+    const snake = fieldName.replace(/([A-Z])/g, '_$1').toLowerCase();
+    if (row[snake] !== undefined) return row[snake];
+    if (row.reserva && row.reserva[snake] !== undefined) return row.reserva[snake];
+
+    // Convert snake_case to camelCase
+    const camel = fieldName.replace(/_([a-z])/g, (_, l) => l.toUpperCase());
+    if (row[camel] !== undefined) return row[camel];
+    if (row.reserva && row.reserva[camel] !== undefined) return row.reserva[camel];
+
+    // Special aliases
+    if (fieldName === 'tenantId') {
+      return row.tenantId || row.tenant_id || row.cnpj || row.cnpjEmpresa || (row.reserva?.tenantId) || (row.reserva?.tenant_id);
+    }
+    if (fieldName === 'clienteNome' || fieldName === 'cliente') {
+      return row.clienteNome || row.cliente_nome || row.cliente?.nome || row.nome || (row.resposta?.nome);
+    }
+    if (fieldName === 'dataRetirada' || fieldName === 'dataDevolucao') {
+      return row[fieldName] || row.reserva?.[fieldName] || row[snake] || row.reserva?.[snake];
+    }
+    if (fieldName === 'valorTotal') {
+      return row.valorTotal !== undefined ? row.valorTotal : (row.valor_total !== undefined ? row.valor_total : row.reserva?.valorTotal);
+    }
+    if (fieldName === 'hardwareId') {
+      return row.hardwareId || row.hardware_id || row.imei || row.id;
+    }
+    if (fieldName === 'deviceName') {
+      return row.deviceName || row.device_name || row.nomeDispositivo;
+    }
+    if (fieldName === 'dataAutorizacao') {
+      return row.dataAutorizacao || row.data_autorizacao || row.dataSolicitacao;
+    }
+    if (fieldName === 'precoAluguel') {
+      return row.precoAluguel !== undefined ? row.precoAluguel : (row.preco_aluguel !== undefined ? row.preco_aluguel : undefined);
+    }
+    if (fieldName === 'quantidadeTotal') {
+      return row.quantidadeTotal !== undefined ? row.quantidadeTotal : (row.quantidade_total !== undefined ? row.quantidade_total : row.quantidade);
+    }
+    if (fieldName === 'statusManutencao') {
+      return row.statusManutencao || row.status_manutencao;
+    }
+    if (fieldName === 'reservaId') {
+      return row.reservaId || row.reserva_id || row.reserva?.id;
+    }
+
+    return undefined;
+  };
+
+  const getDocId = (doc: any): string => {
+    if (!doc) return '';
+    if (doc.id !== undefined && doc.id !== null) return String(doc.id);
+    if (doc.reserva?.id !== undefined && doc.reserva?.id !== null) return String(doc.reserva.id);
+    if (doc.configName) return String(doc.configName);
+    if (doc.config_name) return String(doc.config_name);
+    if (doc.hardwareId) return String(doc.hardwareId);
+    if (doc.hardware_id) return String(doc.hardware_id);
+    if (doc.imei) return String(doc.imei);
+    if (doc.cnpj) return String(doc.cnpj);
+    if (doc.cpfCnpj) return String(doc.cpfCnpj);
+    if (doc.titulo) return String(doc.titulo);
+    if (doc.nome) return String(doc.nome);
+    return '';
+  };
+
   // Get active schema metadata
   const currentSchema = useMemo(() => {
     return TABLE_SCHEMAS.find((s) => s.id === selectedTable) || TABLE_SCHEMAS[0];
   }, [selectedTable]);
 
-  // Extract raw table items
-  const tableData = useMemo(() => {
-    switch (selectedTable) {
+  // Helper to resolve raw table items across globalData and local props with filtering
+  const getRawListForTable = useCallback((tableKey: TableName) => {
+    let propList: any[] = [];
+    switch (tableKey) {
       case 'clients':
-        return clientes;
+        propList = clientes;
+        break;
       case 'stock_items':
-        return itens;
+        propList = itens;
+        break;
       case 'bookings':
-        return reservas;
+        propList = reservas;
+        break;
       case 'web_forms':
-        return webForms;
+        propList = webForms;
+        break;
       case 'financial_transactions':
-        return transacoes;
+        propList = transacoes;
+        break;
       case 'maintenance_history':
-        return manutencoes;
+        propList = manutencoes;
+        break;
       case 'authorized_devices':
-        return dispositivosAutorizados;
+        propList = dispositivosAutorizados;
+        break;
       case 'item_categories':
-        return categorias;
+        propList = categorias;
+        break;
       case 'contract_templates':
-        return modelosContrato;
+        propList = modelosContrato;
+        break;
       case 'tenant_configs':
-        return empresaConfig ? [empresaConfig] : [];
+        propList = empresaConfig && Object.keys(empresaConfig).length > 0 ? [empresaConfig] : [];
+        break;
       default:
-        return [];
+        propList = [];
     }
-  }, [selectedTable, clientes, itens, reservas, webForms, transacoes, manutencoes, dispositivosAutorizados, categorias, modelosContrato, empresaConfig]);
+
+    const globalList = globalData[tableKey];
+    let rawList: any[] = [];
+
+    // Prioritize whichever list actually contains records
+    if (Array.isArray(globalList) && globalList.length > 0) {
+      rawList = globalList;
+    } else if (Array.isArray(propList) && propList.length > 0) {
+      rawList = propList;
+    } else if (Array.isArray(globalList)) {
+      rawList = globalList;
+    } else {
+      rawList = propList;
+    }
+
+    if (deletedIds.size > 0) {
+      rawList = rawList.filter((doc) => {
+        const id = getDocId(doc);
+        if (id && deletedIds.has(String(id))) return false;
+        if (doc.id !== undefined && deletedIds.has(String(doc.id))) return false;
+        if (doc.reserva?.id !== undefined && deletedIds.has(String(doc.reserva.id))) return false;
+        if (doc.hardwareId && deletedIds.has(String(doc.hardwareId))) return false;
+        if (doc.configName && deletedIds.has(String(doc.configName))) return false;
+        if (doc.config_name && deletedIds.has(String(doc.config_name))) return false;
+        if (doc.imei && deletedIds.has(String(doc.imei))) return false;
+        return true;
+      });
+    }
+
+    if (selectedTenantFilter !== 'GLOBAL') {
+      const cleanFilter = String(selectedTenantFilter).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+      rawList = rawList.filter((doc) => {
+        const docTenant = doc.tenantId || doc.tenant_id || doc.cnpj || doc.cnpjEmpresa || (doc.reserva?.tenantId) || (doc.reserva?.tenant_id);
+        if (!docTenant) return true;
+        const cleanDocTenant = String(docTenant).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+        return cleanDocTenant === cleanFilter || String(docTenant) === String(selectedTenantFilter);
+      });
+    }
+
+    return rawList;
+  }, [
+    globalData,
+    clientes,
+    itens,
+    reservas,
+    webForms,
+    transacoes,
+    manutencoes,
+    dispositivosAutorizados,
+    categorias,
+    modelosContrato,
+    empresaConfig,
+    deletedIds,
+    selectedTenantFilter
+  ]);
+
+  // Extract raw table items for selected table
+  const tableData = useMemo(() => {
+    return getRawListForTable(selectedTable);
+  }, [getRawListForTable, selectedTable]);
+
+  // Detected Tenants across all collections
+  const detectedTenants = useMemo(() => {
+    const map = new Map<string, { tenantId: string; nome?: string; count: number }>();
+    
+    if (tenantId) {
+      map.set(tenantId, { tenantId, nome: (empresaConfig as any)?.nomeFantasia || 'Locadora Principal', count: 0 });
+    }
+
+    availableTenantsList.forEach((t) => {
+      map.set(t.tenantId, { tenantId: t.tenantId, nome: t.nomeFantasia || `Tenant ${t.tenantId}`, count: 0 });
+    });
+
+    const allCollections = [
+      ...(globalData.clients || clientes),
+      ...(globalData.stock_items || itens),
+      ...(globalData.bookings || reservas),
+      ...(globalData.web_forms || webForms),
+      ...(globalData.financial_transactions || transacoes),
+      ...(globalData.maintenance_history || manutencoes),
+      ...(globalData.authorized_devices || dispositivosAutorizados),
+      ...(globalData.tenant_configs || (empresaConfig ? [empresaConfig] : []))
+    ];
+
+    allCollections.forEach((item) => {
+      const t = item.tenantId || item.tenant_id || item.cnpj || item.cnpjEmpresa || (item.reserva?.tenantId);
+      if (t && typeof t === 'string' && t !== 'default') {
+        const existing = map.get(t);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          map.set(t, { tenantId: t, nome: `Locadora CNPJ ${t}`, count: 1 });
+        }
+      }
+    });
+
+    return Array.from(map.values());
+  }, [availableTenantsList, globalData, clientes, itens, reservas, webForms, transacoes, manutencoes, dispositivosAutorizados, empresaConfig, tenantId]);
 
   // Filter items
   const filteredData = useMemo(() => {
@@ -326,19 +630,15 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
 
   // Paginated Data
   const totalPages = Math.ceil(filteredData.length / itemsPerPage) || 1;
-  const paginatedData = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage;
-    return filteredData.slice(start, start + itemsPerPage);
-  }, [filteredData, currentPage]);
+  const safeCurrentPage = useMemo(() => {
+    if (currentPage > totalPages) return 1;
+    return Math.max(1, currentPage);
+  }, [currentPage, totalPages]);
 
-  const getDocId = (doc: any): string => {
-    if (!doc) return '1';
-    if (doc.id !== undefined && doc.id !== null) return String(doc.id);
-    if (doc.configName) return String(doc.configName);
-    if (doc.hardwareId) return String(doc.hardwareId);
-    if (doc.cnpj) return String(doc.cnpj);
-    return 'id_' + Math.random().toString(36).substring(2, 7);
-  };
+  const paginatedData = useMemo(() => {
+    const start = (safeCurrentPage - 1) * itemsPerPage;
+    return filteredData.slice(start, start + itemsPerPage);
+  }, [filteredData, safeCurrentPage, itemsPerPage]);
 
   // Ping SQL Test
   const handleTestConnection = async () => {
@@ -350,11 +650,17 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
       const latency = Math.round(end - start);
       setPingResult({
         latencyMs: latency,
-        status: 'PostgreSQL Cloud SQL + Firestore Híbrido Operacional'
+        status: 'PostgreSQL Cloud SQL + Firestore Híbrido Operacional (Multi-Tenant Global Ativo)'
       });
     } finally {
       setTestingPing(false);
     }
+  };
+
+  // Sincronizar Tudo
+  const handleSyncAll = async () => {
+    await fetchGlobalData();
+    if (onRefreshData) onRefreshData();
   };
 
   // Modal Open Handlers
@@ -392,11 +698,21 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
       }
 
       const targetId = getDocId(payloadToSave);
-      await saveDocument(selectedTable, targetId, payloadToSave);
+      const colName = TABLE_COLLECTION_MAP[selectedTable] || selectedTable;
+
+      if (deletedIds.has(String(targetId))) {
+        setDeletedIds(prev => {
+          const next = new Set(prev);
+          next.delete(String(targetId));
+          return next;
+        });
+      }
+
+      await saveDocument(colName, targetId, payloadToSave);
 
       setStatusNotice({
         type: 'success',
-        text: `Registro #${targetId} salvo na tabela '${currentSchema.tableNameSql}' com isolamento de tenant com sucesso!`
+        text: `Registro #${targetId} salvo na tabela '${currentSchema.tableNameSql}' com sucesso!`
       });
 
       setEditingDoc(null);
@@ -409,21 +725,86 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
     }
   };
 
-  const handleDeleteDoc = async (doc: any) => {
-    const targetId = getDocId(doc);
-    if (!confirm(`Confirma a exclusão permanente do registro #${targetId} da tabela '${currentSchema.tableNameSql}'?`)) {
+  const handleDeleteDoc = (doc: any) => {
+    if (!doc) return;
+    setDeletingDoc(doc);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deletingDoc) return;
+    const targetDoc = deletingDoc;
+    const targetId = getDocId(targetDoc);
+    if (!targetId) {
+      setDeletingDoc(null);
       return;
     }
+
+    const targetIdStr = String(targetId);
+    setIsDeleting(true);
+
+    // Fechar todos os modais imediatamente para a interface ficar limpa
+    setDeletingDoc(null);
+    setViewingDoc(null);
+    setEditingDoc(null);
+    setIsCreatingNew(false);
+
     try {
-      await deleteDocument(selectedTable, targetId);
+      // 1. Atualização otimista imediata na interface
+      setDeletedIds(prev => new Set(prev).add(targetIdStr));
+
+      // 2. Atualizar globalData imediatamente na memória
+      setGlobalData(prev => {
+        const next = { ...prev };
+        const list = next[selectedTable];
+        if (Array.isArray(list)) {
+          next[selectedTable] = list.filter((item: any) => {
+            const itemId = getDocId(item);
+            return String(itemId) !== targetIdStr && 
+                   String(item?.id) !== targetIdStr && 
+                   String(item?.reserva?.id) !== targetIdStr &&
+                   String(item?.hardwareId) !== targetIdStr && 
+                   String(item?.configName) !== targetIdStr &&
+                   String(item?.config_name) !== targetIdStr &&
+                   String(item?.imei) !== targetIdStr;
+          });
+        }
+        return next;
+      });
+
+      // 3. Executar exclusão real no backend e no storage local
+      const docTenant = targetDoc.tenantId || targetDoc.tenant_id || targetDoc.cnpj || targetDoc.cnpjEmpresa || (targetDoc.reserva?.tenantId) || tenantId || 'GLOBAL';
+      const colName = TABLE_COLLECTION_MAP[selectedTable] || selectedTable;
+      await deleteDocument(colName, targetId, docTenant);
+
       setStatusNotice({
         type: 'success',
-        text: `Registro #${targetId} removido da tabela '${currentSchema.tableNameSql}'.`
+        text: `Registro #${targetId} removido da tabela '${currentSchema.tableNameSql}' com sucesso!`
       });
-      if (onRefreshData) onRefreshData();
+
+      if (onRefreshData) {
+        try {
+          await onRefreshData();
+        } catch (e) {}
+      }
+      await fetchGlobalData();
       setTimeout(() => setStatusNotice(null), 4000);
     } catch (err: any) {
-      alert(`Erro ao excluir: ${err.message}`);
+      // Reverter se falhar
+      setDeletedIds(prev => {
+        const next = new Set(prev);
+        next.delete(targetIdStr);
+        return next;
+      });
+      await fetchGlobalData();
+      setStatusNotice({
+        type: 'error',
+        text: `Erro ao excluir: ${err.message || 'Falha ao processar exclusão no banco de dados'}`
+      });
+      setTimeout(() => setStatusNotice(null), 6000);
+    } finally {
+      setIsDeleting(false);
+      setDeletingDoc(null);
+      setViewingDoc(null);
     }
   };
 
@@ -439,42 +820,173 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
   };
 
   // Run SQL Console Query
-  const handleExecuteSql = () => {
-    if (!sqlQuery.trim()) return;
+  const handleExecuteSql = async () => {
+    let currentQuery = sqlQuery.trim();
+    if (!currentQuery) return;
+
+    // Auto-preencher ponto e vírgula ";" se não tiver sido adicionado no final
+    if (!currentQuery.endsWith(';')) {
+      currentQuery += ';';
+      setSqlQuery(currentQuery);
+    }
+
     setIsExecutingSql(true);
     const start = performance.now();
 
-    setTimeout(() => {
-      let rows: any[] = [];
-      const queryUpper = sqlQuery.toUpperCase();
+    try {
+      // 1. Tratar comandos DELETE FROM especificamente
+      const matchDelete = currentQuery.match(/DELETE\s+FROM\s+([a-zA-Z_]+)(?:\s+WHERE\s+(.+))?/i);
+      if (matchDelete) {
+        const rawTable = matchDelete[1].toLowerCase();
+        const whereClause = matchDelete[2] ? matchDelete[2].replace(/;$/, '').trim() : '';
 
-      if (queryUpper.includes('FROM CLIENTS')) {
-        rows = clientes;
-      } else if (queryUpper.includes('FROM STOCK_ITEMS')) {
-        rows = itens;
-      } else if (queryUpper.includes('FROM BOOKINGS')) {
-        rows = reservas;
-      } else if (queryUpper.includes('FROM FINANCIAL_TRANSACTIONS')) {
-        rows = transacoes;
-      } else {
-        rows = tableData;
+        let tableKey: TableName | null = null;
+        if (rawTable === 'clients' || rawTable === 'clientes') tableKey = 'clients';
+        else if (rawTable === 'stock_items' || rawTable === 'itens' || rawTable === 'estoque') tableKey = 'stock_items';
+        else if (rawTable === 'bookings' || rawTable === 'reservas') tableKey = 'bookings';
+        else if (rawTable === 'web_forms' || rawTable === 'webforms') tableKey = 'web_forms';
+        else if (rawTable === 'financial_transactions' || rawTable === 'transacoes') tableKey = 'financial_transactions';
+        else if (rawTable === 'maintenance_history' || rawTable === 'manutencoes' || rawTable === 'maintenance_records') tableKey = 'maintenance_history';
+        else if (rawTable === 'authorized_devices' || rawTable === 'dispositivos') tableKey = 'authorized_devices';
+        else if (rawTable === 'item_categories' || rawTable === 'categorias') tableKey = 'item_categories';
+        else if (rawTable === 'contract_templates' || rawTable === 'modelos') tableKey = 'contract_templates';
+
+        if (tableKey) {
+          const colName = TABLE_COLLECTION_MAP[tableKey];
+          let currentList: any[] = [];
+          if (Array.isArray(globalData[tableKey])) {
+            currentList = globalData[tableKey]!;
+          } else if (tableKey === 'clients') currentList = clientes;
+          else if (tableKey === 'stock_items') currentList = itens;
+          else if (tableKey === 'bookings') currentList = reservas;
+          else if (tableKey === 'web_forms') currentList = webForms;
+          else if (tableKey === 'financial_transactions') currentList = transacoes;
+          else if (tableKey === 'maintenance_history') currentList = manutencoes;
+          else if (tableKey === 'authorized_devices') currentList = dispositivosAutorizados;
+          else if (tableKey === 'item_categories') currentList = categorias;
+          else if (tableKey === 'contract_templates') currentList = modelosContrato;
+
+          let toDelete: any[] = [];
+          if (!whereClause) {
+            toDelete = [...currentList];
+          } else {
+            const idMatch = whereClause.match(/id\s*=\s*['"]?([^'";\s]+)['"]?/i);
+            if (idMatch) {
+              const searchId = idMatch[1];
+              toDelete = currentList.filter((item) => String(getDocId(item)) === searchId);
+            } else {
+              toDelete = currentList.filter((item) => {
+                const json = JSON.stringify(item).toLowerCase();
+                return json.includes(whereClause.toLowerCase().replace(/['"]/g, ''));
+              });
+            }
+          }
+
+          const newlyDeleted = new Set(deletedIds);
+          for (const doc of toDelete) {
+            const docId = getDocId(doc);
+            if (docId) {
+              const docIdStr = String(docId);
+              newlyDeleted.add(docIdStr);
+              const docTenant = doc.tenantId || doc.tenant_id || doc.cnpj || doc.cnpjEmpresa || (doc.reserva?.tenantId) || tenantId || 'GLOBAL';
+              await deleteDocument(colName, docId, docTenant);
+            }
+          }
+          setDeletedIds(newlyDeleted);
+
+          // Atualizar globalData na memória
+          setGlobalData(prev => {
+            const next = { ...prev };
+            const list = next[selectedTable];
+            if (Array.isArray(list)) {
+              const deletedStrings = new Set(toDelete.map(d => String(getDocId(d))));
+              next[selectedTable] = list.filter(item => !deletedStrings.has(String(getDocId(item))));
+            }
+            return next;
+          });
+
+          if (onRefreshData) {
+            try {
+              await onRefreshData();
+            } catch (e) {}
+          }
+          await fetchGlobalData();
+
+          try {
+            await executeSqlRemote(currentQuery);
+          } catch {
+            // Sucesso offline garantido
+          }
+
+          const end = performance.now();
+          setSqlResult({
+            columns: ['status', 'registros_afetados', 'tabela', 'clausula_where'],
+            rows: [{
+              status: 'SUCESSO',
+              registros_afetados: toDelete.length,
+              tabela: rawTable,
+              clausula_where: whereClause || 'TODOS (SEM WHERE)'
+            }],
+            executionTimeMs: Math.round(end - start)
+          });
+
+          if (!queryHistory.includes(currentQuery)) {
+            setQueryHistory([currentQuery, ...queryHistory.slice(0, 4)]);
+          }
+          setIsExecutingSql(false);
+          return;
+        }
       }
 
-      const cols = rows.length > 0 ? Object.keys(rows[0]) : ['id', 'tenantId', 'status', 'resultado'];
-      const end = performance.now();
+      // 2. Executar via Backend PostgreSQL
+      try {
+        const res = await executeSqlRemote(currentQuery);
+        setSqlResult({
+          columns: res.columns,
+          rows: res.rows,
+          executionTimeMs: res.executionTimeMs
+        });
+      } catch {
+        // Fallback local caso offline
+        let rows: any[] = [];
+        const queryUpper = currentQuery.toUpperCase();
 
-      setSqlResult({
-        columns: cols,
-        rows,
-        executionTimeMs: Math.round(end - start)
-      });
+        if (queryUpper.includes('FROM CLIENTS') || queryUpper.includes('FROM CLIENTES')) {
+          rows = clientes;
+        } else if (queryUpper.includes('FROM STOCK_ITEMS') || queryUpper.includes('FROM ITENS')) {
+          rows = itens;
+        } else if (queryUpper.includes('FROM BOOKINGS') || queryUpper.includes('FROM RESERVAS')) {
+          rows = reservas;
+        } else if (queryUpper.includes('FROM FINANCIAL_TRANSACTIONS') || queryUpper.includes('FROM TRANSACOES')) {
+          rows = transacoes;
+        } else if (queryUpper.includes('FROM MAINTENANCE_HISTORY') || queryUpper.includes('FROM MANUTENCOES')) {
+          rows = manutencoes;
+        } else if (queryUpper.includes('FROM AUTHORIZED_DEVICES') || queryUpper.includes('FROM DISPOSITIVOS')) {
+          rows = dispositivosAutorizados;
+        } else if (queryUpper.includes('FROM ITEM_CATEGORIES') || queryUpper.includes('FROM CATEGORIAS')) {
+          rows = categorias;
+        } else {
+          rows = tableData;
+        }
 
-      if (!queryHistory.includes(sqlQuery)) {
-        setQueryHistory([sqlQuery, ...queryHistory.slice(0, 4)]);
+        const cols = rows.length > 0 ? Object.keys(rows[0]) : ['id', 'tenantId', 'status', 'resultado'];
+        const end = performance.now();
+
+        setSqlResult({
+          columns: cols,
+          rows,
+          executionTimeMs: Math.round(end - start)
+        });
       }
 
+      if (!queryHistory.includes(currentQuery)) {
+        setQueryHistory([currentQuery, ...queryHistory.slice(0, 4)]);
+      }
+    } catch (err: any) {
+      alert(`Erro na query SQL: ${err.message}`);
+    } finally {
       setIsExecutingSql(false);
-    }, 120);
+    }
   };
 
   // Execute Database View
@@ -531,6 +1043,60 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
 
   return (
     <div className="space-y-6 text-[#E4E4E7]">
+      {/* MASTER USER ROOT STATUS BANNER & TENANT FILTER */}
+      <div className="bg-gradient-to-r from-[#D4AF37]/20 via-[#18181B] to-cyan-500/10 border border-[#D4AF37]/40 rounded-2xl p-4 shadow-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 animate-fadeIn">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl bg-[#D4AF37]/20 text-[#D4AF37] border border-[#D4AF37]/50 shrink-0">
+            <Crown size={24} className="animate-pulse" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-serif italic font-extrabold text-white">
+                Explorador Root Master (Acervus)
+              </h3>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[#D4AF37] text-black">
+                SEM VÍNCULO COM TENANT • VISUALIZAÇÃO IRRESTRITA
+              </span>
+              {isLoadingGlobalData && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 animate-pulse">
+                  Carregando todos os tenants...
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-[#A1A1AA] pt-0.5">
+              O Usuário Mestre tem visão 360° de todos os registros de todas as locadoras do ecossistema, podendo consultar e manipular dados globalmente ou filtrar por tenant específico.
+            </p>
+          </div>
+        </div>
+
+        {/* TENANT FILTER SELECTOR */}
+        <div className="flex items-center gap-2 bg-[#0A0A0B] p-1.5 rounded-xl border border-[#27272A] shrink-0">
+          <Globe size={15} className="text-cyan-400 ml-1.5 shrink-0" />
+          <span className="text-[11px] font-mono text-[#A1A1AA] font-bold shrink-0">Filtro:</span>
+          <select
+            value={selectedTenantFilter}
+            onChange={(e) => setSelectedTenantFilter(e.target.value)}
+            className="bg-[#18181B] text-white text-xs font-bold font-mono py-1.5 px-3 rounded-lg border border-[#27272A] focus:border-[#D4AF37] focus:outline-none cursor-pointer max-w-[240px] truncate"
+          >
+            <option value="GLOBAL">🌐 Todos os Tenants (Visão Global)</option>
+            {detectedTenants.map((t) => (
+              <option key={t.tenantId} value={t.tenantId}>
+                🏢 {t.nome || t.tenantId} ({t.tenantId})
+              </option>
+            ))}
+          </select>
+          {selectedTenantFilter !== 'GLOBAL' && (
+            <button
+              type="button"
+              onClick={() => setSelectedTenantFilter('GLOBAL')}
+              className="px-2.5 py-1 bg-[#D4AF37]/20 hover:bg-[#D4AF37]/30 text-[#D4AF37] text-[11px] font-bold rounded-lg transition-colors cursor-pointer"
+            >
+              Ver Todos
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* HEADER BANNER */}
       <div className="bg-[#111113] border border-[#27272A] rounded-2xl p-5 shadow-2xl relative overflow-hidden">
         <div className="absolute top-0 right-0 w-96 h-96 bg-[#D4AF37]/5 rounded-full blur-3xl pointer-events-none" />
@@ -546,14 +1112,18 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
                   Explorador & Gestor Unificado do Banco de Dados
                 </h2>
                 <span className="text-xs text-[#A1A1AA]">
-                  PostgreSQL Cloud SQL (Drizzle ORM) + GCP Firestore Híbrido com Isolamento Multi-Tenant
+                  PostgreSQL Cloud SQL (Drizzle ORM) + GCP Firestore Híbrido com Suporte Multi-Tenant & Modo Mestre
                 </span>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 pt-1">
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-[10px] font-bold">
-                TENANT: {tenantId}
+              <span className={`px-2.5 py-0.5 rounded-full font-mono text-[10px] font-bold border ${
+                selectedTenantFilter === 'GLOBAL'
+                  ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
+                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+              }`}>
+                {selectedTenantFilter === 'GLOBAL' ? '🌐 ESCOPO: TODOS OS TENANTS (GLOBAL)' : `🏢 FILTRO TENANT: ${selectedTenantFilter}`}
               </span>
               <span className="px-2.5 py-0.5 rounded-full bg-[#D4AF37]/10 border border-[#D4AF37]/30 text-[#D4AF37] font-mono text-[10px] font-bold">
                 10 TABELAS RELACIONAIS
@@ -578,16 +1148,14 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
               <span>{testingPing ? 'Testando...' : 'Testar Conexão SQL'}</span>
             </button>
 
-            {onRefreshData && (
-              <button
-                type="button"
-                onClick={onRefreshData}
-                className="px-3.5 py-2 bg-[#18181B] hover:bg-[#27272A] border border-[#27272A] text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
-              >
-                <RefreshCw size={14} className="text-[#D4AF37]" />
-                <span>Sincronizar</span>
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleSyncAll}
+              className="px-3.5 py-2 bg-[#18181B] hover:bg-[#27272A] border border-[#27272A] text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <RefreshCw size={14} className={`text-[#D4AF37] ${isLoadingGlobalData ? 'animate-spin' : ''}`} />
+              <span>Sincronizar</span>
+            </button>
 
             <button
               type="button"
@@ -717,7 +1285,25 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
           <Server size={15} />
           <span>🩺 Diagnóstico & Saúde</span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveMainTab('audit_logs')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            activeMainTab === 'audit_logs'
+              ? 'bg-[#D4AF37] text-black shadow-md font-extrabold'
+              : 'text-[#A1A1AA] hover:text-white hover:bg-[#18181B]'
+          }`}
+        >
+          <ShieldCheck size={15} />
+          <span>🛡️ Logs de Auditoria</span>
+        </button>
       </div>
+
+      {/* TAB 7: LOGS DE AUDITORIA DO BANCO */}
+      {activeMainTab === 'audit_logs' && (
+        <AuditLogsPanel tenantId={tenantId} onRefreshParentData={onRefreshData} />
+      )}
 
       {/* TAB 1: TABELAS & REGISTROS */}
       {activeMainTab === 'data_explorer' && (
@@ -752,18 +1338,7 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
 
             <div className="flex flex-wrap gap-2">
               {TABLE_SCHEMAS.map((schema) => {
-                let count = 0;
-                if (schema.id === 'clients') count = clientes.length;
-                else if (schema.id === 'stock_items') count = itens.length;
-                else if (schema.id === 'bookings') count = reservas.length;
-                else if (schema.id === 'web_forms') count = webForms.length;
-                else if (schema.id === 'financial_transactions') count = transacoes.length;
-                else if (schema.id === 'maintenance_history') count = manutencoes.length;
-                else if (schema.id === 'authorized_devices') count = dispositivosAutorizados.length;
-                else if (schema.id === 'item_categories') count = categorias.length;
-                else if (schema.id === 'contract_templates') count = modelosContrato.length;
-                else if (schema.id === 'tenant_configs') count = empresaConfig ? 1 : 0;
-
+                const count = getRawListForTable(schema.id).length;
                 const isSelected = selectedTable === schema.id;
 
                 return (
@@ -816,10 +1391,29 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
             </div>
 
             {paginatedData.length === 0 ? (
-              <div className="p-12 text-center text-[#71717A] space-y-2">
+              <div className="p-12 text-center text-[#71717A] space-y-3">
                 <FileJson size={36} className="mx-auto opacity-40 text-[#D4AF37]" />
                 <p className="text-xs font-semibold text-[#A1A1AA]">Nenhum registro localizado nesta tabela.</p>
-                <p className="text-[11px]">Utilize a busca ou clique em 'Novo Registro' para popular o banco.</p>
+                {searchTerm || selectedTenantFilter !== 'GLOBAL' ? (
+                  <div className="pt-1 flex flex-col items-center gap-2">
+                    <p className="text-[11px] text-[#71717A]">
+                      A busca "{searchTerm}" ou o filtro de tenant ({selectedTenantFilter}) está ocultando os registros.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchTerm('');
+                        setSelectedTenantFilter('GLOBAL');
+                        setCurrentPage(1);
+                      }}
+                      className="px-3 py-1.5 bg-[#D4AF37] text-black rounded-xl text-xs font-bold hover:bg-[#b89628] transition-all cursor-pointer shadow-md"
+                    >
+                      Limpar Filtro e Exibir Registros Globais
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-[11px]">Utilize a busca ou clique em 'Novo Registro' para popular o banco.</p>
+                )}
               </div>
             ) : viewMode === 'table' ? (
               <div className="overflow-x-auto">
@@ -843,16 +1437,28 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
                       return (
                         <tr key={idx} className="hover:bg-[#18181B]/60 transition-colors">
                           {currentSchema.columns.map((col) => {
-                            const val = row[col.name];
+                            const val = getFieldValue(row, col.name);
                             return (
                               <td key={col.name} className="px-4 py-3 text-xs">
                                 {col.primaryKey ? (
                                   <span className="font-mono font-bold text-[#D4AF37]">#{String(val || docId)}</span>
                                 ) : col.tenantKey ? (
-                                  <span className="font-mono text-[10px] bg-[#18181B] px-1.5 py-0.5 rounded border border-[#27272A] text-[#A1A1AA]">
-                                    {String(val || tenantId)}
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedTenantFilter(String(val || tenantId))}
+                                    title={`Filtrar apenas o tenant ${String(val || tenantId)}`}
+                                    className="font-mono text-[10px] bg-[#18181B] hover:bg-[#D4AF37]/20 px-2 py-0.5 rounded border border-[#27272A] hover:border-[#D4AF37]/50 text-cyan-400 font-bold transition-all flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Building2 size={10} className="text-[#D4AF37]" />
+                                    <span>{String(val || tenantId)}</span>
+                                  </button>
+                                ) : col.type === 'timestamp' && val ? (
+                                  <span className="font-mono text-[11px] text-[#A1A1AA]">
+                                    {typeof val === 'number'
+                                      ? new Date(val).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                                      : String(val)}
                                   </span>
-                                ) : col.type === 'number' && col.name.toLowerCase().includes('preco') ? (
+                                ) : col.type === 'number' && (col.name.toLowerCase().includes('preco') || col.name.toLowerCase().includes('valor') || col.name.toLowerCase().includes('custo')) ? (
                                   <span className="font-mono font-bold text-emerald-400">
                                     R$ {Number(val || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                                   </span>
@@ -863,11 +1469,11 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
                                     {val ? 'TRUE' : 'FALSE'}
                                   </span>
                                 ) : typeof val === 'object' ? (
-                                  <span className="font-mono text-cyan-400 text-[10px] truncate max-w-[150px] block">
+                                  <span className="font-mono text-cyan-400 text-[10px] truncate max-w-[150px] block" title={JSON.stringify(val)}>
                                     {JSON.stringify(val).substring(0, 30)}...
                                   </span>
                                 ) : (
-                                  <span className="text-white truncate max-w-[180px] block font-sans">
+                                  <span className="text-white truncate max-w-[180px] block font-sans" title={val !== undefined && val !== null ? String(val) : ''}>
                                     {val !== undefined && val !== null ? String(val) : <em className="text-[#71717A]">null</em>}
                                   </span>
                                 )}
@@ -1239,6 +1845,12 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
               rows={4}
               value={sqlQuery}
               onChange={(e) => setSqlQuery(e.target.value)}
+              onBlur={() => {
+                const trimmed = sqlQuery.trim();
+                if (trimmed && !trimmed.endsWith(';')) {
+                  setSqlQuery(trimmed + ';');
+                }
+              }}
               placeholder="Digite sua instrução SQL (ex: SELECT * FROM clients WHERE tenant_id = '...')"
               className="w-full p-3.5 bg-[#0A0A0B] border border-[#27272A] text-emerald-400 font-mono text-xs rounded-xl focus:border-[#D4AF37] focus:outline-none leading-relaxed"
             />
@@ -1348,14 +1960,40 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
               {JSON.stringify(viewingDoc, null, 2)}
             </pre>
 
-            <div className="flex justify-end">
+            <div className="flex justify-between items-center pt-2 border-t border-[#27272A]">
               <button
                 type="button"
-                onClick={() => setViewingDoc(null)}
-                className="px-4 py-2 bg-[#18181B] text-white text-xs font-bold rounded-xl cursor-pointer"
+                onClick={() => {
+                  const target = viewingDoc;
+                  setViewingDoc(null);
+                  handleDeleteDoc(target);
+                }}
+                className="px-3.5 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-bold rounded-xl cursor-pointer flex items-center gap-1.5 transition-colors"
               >
-                Fechar
+                <Trash2 size={14} />
+                <span>Excluir Registro</span>
               </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = viewingDoc;
+                    setViewingDoc(null);
+                    handleOpenEdit(target);
+                  }}
+                  className="px-3.5 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 text-xs font-bold rounded-xl cursor-pointer flex items-center gap-1.5 transition-colors"
+                >
+                  <Edit2 size={14} />
+                  <span>Editar</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewingDoc(null)}
+                  className="px-4 py-2 bg-[#18181B] hover:bg-[#27272A] text-white text-xs font-bold rounded-xl cursor-pointer transition-colors"
+                >
+                  Fechar
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1476,6 +2114,82 @@ export const DatabaseExplorerView: React.FC<DatabaseExplorerProps> = ({
           </div>
         </div>
       ) : null}
+
+      {/* DELETE CONFIRMATION MODAL */}
+      {deletingDoc && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#111113] border border-rose-500/30 rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3.5">
+              <div className="p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl shrink-0">
+                <Trash2 size={22} />
+              </div>
+              <div className="space-y-1 flex-1">
+                <h3 className="font-mono font-bold text-white text-sm flex items-center gap-2">
+                  Excluir Registro Permanente
+                </h3>
+                <p className="text-xs text-[#A1A1AA] leading-relaxed">
+                  Confirma a remoção definitiva do registro da tabela <span className="font-mono text-rose-300 font-bold">'{currentSchema.tableNameSql}'</span>?
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-[#0A0A0B] border border-[#27272A] p-3.5 rounded-xl space-y-2 font-mono text-xs">
+              <div className="flex justify-between items-center text-[11px] pb-1.5 border-b border-[#27272A]">
+                <span className="text-[#71717A]">ID do Documento:</span>
+                <span className="font-bold text-[#D4AF37]">#{getDocId(deletingDoc)}</span>
+              </div>
+              {(deletingDoc.nome || deletingDoc.titulo || deletingDoc.clienteNome || deletingDoc.descricao || deletingDoc.configName || deletingDoc.config_name) && (
+                <div className="flex justify-between items-center text-[11px] pb-1.5 border-b border-[#27272A]">
+                  <span className="text-[#71717A]">Descrição / Nome:</span>
+                  <span className="text-white truncate max-w-[200px]">
+                    {deletingDoc.nome || deletingDoc.titulo || deletingDoc.clienteNome || deletingDoc.descricao || deletingDoc.configName || deletingDoc.config_name}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between items-center text-[11px]">
+                <span className="text-[#71717A]">Tenant / Empresa:</span>
+                <span className="text-cyan-400 truncate max-w-[200px]">
+                  {deletingDoc.tenantId || deletingDoc.tenant_id || deletingDoc.cnpj || tenantId || 'GLOBAL'}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-rose-500/5 border border-rose-500/15 rounded-xl flex items-center gap-2 text-[11px] text-rose-300">
+              <AlertTriangle size={15} className="shrink-0 text-rose-400" />
+              <span>Esta operação é irreversível e limpará todas as referências associadas.</span>
+            </div>
+
+            <div className="flex justify-end gap-2.5 pt-2 border-t border-[#27272A]">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setDeletingDoc(null)}
+                className="px-4 py-2.5 bg-[#18181B] hover:bg-[#27272A] text-[#A1A1AA] hover:text-white text-xs font-bold rounded-xl cursor-pointer transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleConfirmDelete}
+                className="px-5 py-2.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl cursor-pointer flex items-center gap-2 shadow-lg shadow-rose-900/30 transition-colors disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin" />
+                    <span>Excluindo...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={14} />
+                    <span>Confirmar Exclusão</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

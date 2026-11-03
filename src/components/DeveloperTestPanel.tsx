@@ -42,6 +42,7 @@ import { getEnvironmentInfo, getAppEnvOverride, setAppEnvOverride } from '../uti
 import { NfseAndroidDocView } from './NfseAndroidDocView';
 import { DatabaseExplorerView } from './DatabaseExplorerView';
 import { ClientUserAccessControlView } from './ClientUserAccessControlView';
+import { AuditLogsPanel } from './AuditLogsPanel';
 
 interface DeveloperTestPanelProps {
   itens: ItemAcervo[];
@@ -50,6 +51,7 @@ interface DeveloperTestPanelProps {
   webForms: FormularioWeb[];
   dispositivos: DispositivoAutorizado[];
   empresaConfig?: EmpresaConfig;
+  authenticatedDevice?: DispositivoAutorizado | null;
   onTriggerWorkerSync: () => void;
   onRefreshData: () => Promise<void>;
   onSaveConfig?: (newConfig: EmpresaConfig) => void;
@@ -63,6 +65,7 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
   webForms,
   dispositivos,
   empresaConfig,
+  authenticatedDevice,
   onTriggerWorkerSync,
   onRefreshData,
   onSaveConfig,
@@ -94,6 +97,7 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
   ]);
   const [isWiping, setIsWiping] = useState(false);
   const [showWipeConfirm, setShowWipeConfirm] = useState(false);
+  const [wipeScope, setWipeScope] = useState<'tenant' | 'all'>('tenant');
   const [isSeeding, setIsSeeding] = useState(false);
   const [latencyActive, setLatencyActive] = useState(false);
   const [simulatedErrorActive, setSimulatedErrorActive] = useState(false);
@@ -278,7 +282,7 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
     try {
       setIsWiping(true);
       addLog('==================================================================', 'warn');
-      addLog('⚙️ INICIANDO OPERAÇÃO SISTÊMICA: WIPE DE BANCO DE DADOS (Cloud SQL PostgreSQL)', 'warn');
+      addLog(`⚙️ INICIANDO OPERAÇÃO SISTÊMICA: WIPE DE BANCO (${wipeScope === 'all' ? 'GLOBAL - TODOS OS TENANTS' : 'POR TENANT'})`, 'warn');
       addLog('==================================================================', 'warn');
       addLog(`Dispositivo Alvo: ${localStorage.getItem('locadora_device_uuid') || 'UUID-Dispositivo-Nao-Registrado'}`, 'info');
       addLog('Iniciador da Ação: Sênior Developer Admin Shell Console', 'info');
@@ -286,7 +290,8 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
       addLog('------------------------------------------------------------------', 'info');
 
       const tenantId = empresaConfig?.cnpj || '45.678.910/0001-23';
-      addLog(`[Syslog] Solicitando purga e truncamento no Cloud SQL para o tenant: ${tenantId}`, 'info');
+      const cleanTenantId = tenantId.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+      addLog(`[Syslog] Solicitando purga no Cloud SQL (Escopo: ${wipeScope === 'all' ? 'Todos os Tenants' : `Tenant ${tenantId}`})`, 'info');
 
       const res = await fetch('/api/admin/wipe', {
         method: 'POST',
@@ -294,7 +299,7 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
           'Content-Type': 'application/json',
           'x-tenant-id': tenantId,
         },
-        body: JSON.stringify({ tenantId }),
+        body: JSON.stringify({ tenantId, allTenants: wipeScope === 'all', scope: wipeScope }),
       });
 
       if (!res.ok) {
@@ -306,11 +311,27 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
       addLog(`[ADB Output] ${resJson.message || 'Dados purgados do Cloud SQL com sucesso.'}`, 'success');
 
       localStorage.setItem('locadora_wiped_state', 'true');
+      localStorage.setItem(`locadora_wiped_state_${tenantId}`, 'true');
+      if (cleanTenantId) {
+        localStorage.setItem(`locadora_wiped_state_${cleanTenantId}`, 'true');
+      }
       
-      // Clear offline local storage collections & configs
+      // Clear all offline local storage collections & configs dynamically
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith('offline_db_') || k.startsWith('offline_config_'))) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+
+      // Clear specific legacy keys
       const localKeys = ['itens', 'clientes', 'reservas', 'categorias', 'transacoes', 'manutencoes', 'modelosContratos', 'webForms', 'dispositivos_autorizados'];
       localKeys.forEach((key) => {
         localStorage.removeItem(`offline_db_${key}`);
+        localStorage.removeItem(`offline_db_${tenantId}_${key}`);
+        if (cleanTenantId) localStorage.removeItem(`offline_db_${cleanTenantId}_${key}`);
       });
       localStorage.removeItem('offline_config_empresaConfig');
       localStorage.removeItem('offline_config_themeConfig');
@@ -318,7 +339,7 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
       addLog('[ADB Output] Cache offline local (localStorage) purgado com sucesso.', 'success');
 
       addLog('==================================================================', 'success');
-      addLog('🟢 WIPE DE BANCO DE DADOS CLOUD SQL & CACHE CONCLUÍDO COM SUCESSO', 'success');
+      addLog('🟢 PURGA DE DADOS DO BANCO & CACHE CONCLUÍDA COM SUCESSO', 'success');
       addLog('==================================================================', 'success');
       
       // Force reload UI data mapping
@@ -652,6 +673,18 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
 
             <button
               type="button"
+              onClick={() => setDevTab('audit_logs')}
+              className={`px-4 py-2.5 text-xs font-mono font-bold uppercase tracking-wide transition-all rounded-t-xl border-b-2 cursor-pointer whitespace-nowrap shrink-0 ${
+                devTab === 'audit_logs'
+                  ? 'border-[#D4AF37] text-white bg-[#111113]'
+                  : 'border-transparent text-[#71717A] hover:text-[#A1A1AA]'
+              }`}
+            >
+              🛡️ Logs de Auditoria
+            </button>
+
+            <button
+              type="button"
               onClick={() => setDevTab('access_control')}
               className={`px-4 py-2.5 text-xs font-mono font-bold uppercase tracking-wide transition-all rounded-t-xl border-b-2 cursor-pointer whitespace-nowrap shrink-0 ${
                 devTab === 'access_control'
@@ -881,12 +914,41 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
                         <p className="text-[11px] text-[#A1A1AA] mt-1 leading-relaxed">
                           Remove itens, clientes e reservas do banco de dados para testar comportamentos de estado vazio (Empty State).
                         </p>
+
+                        {/* Seletor de Escopo de Purga */}
+                        <div className="mt-3 p-2 bg-[#111113] rounded-xl border border-[#27272A] space-y-1.5">
+                          <span className="text-[10px] uppercase font-mono text-[#71717A] block">Escopo da Purga:</span>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setWipeScope('tenant')}
+                              className={`py-1 px-2 text-[10px] font-bold rounded-lg transition-all text-center border cursor-pointer ${
+                                wipeScope === 'tenant'
+                                  ? 'bg-[#D4AF37]/15 text-[#D4AF37] border-[#D4AF37]/40'
+                                  : 'bg-[#18181B] text-[#71717A] border-transparent hover:text-[#A1A1AA]'
+                              }`}
+                            >
+                              Tenant Atual
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setWipeScope('all')}
+                              className={`py-1 px-2 text-[10px] font-bold rounded-lg transition-all text-center border cursor-pointer ${
+                                wipeScope === 'all'
+                                  ? 'bg-red-500/15 text-red-400 border-red-500/40'
+                                  : 'bg-[#18181B] text-[#71717A] border-transparent hover:text-[#A1A1AA]'
+                              }`}
+                            >
+                              Todos os Tenants
+                            </button>
+                          </div>
+                        </div>
                       </div>
                       
                       {showWipeConfirm ? (
                         <div className="mt-4 space-y-2">
                           <p className="text-[10px] text-red-400 font-bold leading-normal">
-                            ⚠️ Tem certeza absoluta? Essa ação é IRREVERSÍVEL e apagará todos os dados remotos.
+                            ⚠️ Tem certeza? Isso limpará os dados de {wipeScope === 'tenant' ? 'este tenant' : 'TODOS os tenants'}. Ação IRREVERSÍVEL.
                           </p>
                           <div className="grid grid-cols-2 gap-2">
                             <button
@@ -895,7 +957,7 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
                               className="py-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold rounded-lg transition-all flex items-center justify-center gap-1 cursor-pointer"
                             >
                               {isWiping ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
-                              <span>Sim, Zerar</span>
+                              <span>Sim, Zerar ({wipeScope === 'tenant' ? 'Tenant' : 'Global'})</span>
                             </button>
                             <button
                               onClick={() => setShowWipeConfirm(false)}
@@ -913,7 +975,7 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
                           className="group w-full mt-4 py-2 bg-red-500/10 border border-red-500/30 hover:bg-red-500/20 text-red-400 text-[11px] font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                         >
                           <Trash2 size={14} className="group-hover:scale-110 transition-transform" />
-                          <span>Zerar Banco de Dados</span>
+                          <span>Zerar Dados ({wipeScope === 'tenant' ? 'Tenant Atual' : 'Purga Global'})</span>
                         </button>
                       )}
                     </div>
@@ -1243,7 +1305,13 @@ export const DeveloperTestPanel: React.FC<DeveloperTestPanelProps> = ({
               categorias={INITIAL_CATEGORIAS}
               empresaConfig={empresaConfig || INITIAL_EMPRESA_CONFIG}
               tenantId={empresaConfig?.cnpj || '45.678.910/0001-23'}
+              authenticatedDevice={authenticatedDevice}
               onRefreshData={onRefreshData}
+            />
+          ) : devTab === 'audit_logs' ? (
+            <AuditLogsPanel
+              tenantId={empresaConfig?.cnpj || '45.678.910/0001-23'}
+              onRefreshParentData={onRefreshData}
             />
           ) : devTab === 'access_control' ? (
             <ClientUserAccessControlView

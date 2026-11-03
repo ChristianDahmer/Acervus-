@@ -65,10 +65,14 @@ export const getAccessToken = async (): Promise<string | null> => {
   return cachedAccessToken;
 };
 
-export const logout = async () => {
-  await auth.signOut();
+export const clearGoogleAccessToken = () => {
   cachedAccessToken = null;
   localStorage.removeItem('google_access_token');
+};
+
+export const logout = async () => {
+  await auth.signOut();
+  clearGoogleAccessToken();
 };
 
 /**
@@ -307,7 +311,7 @@ export const uploadFileToGoogleDrive = async (
   fileName: string,
   content: string,
   mimeType: string = 'application/json',
-  folderPathOrName: string = '/Bora Festar Locações/Backups'
+  folderPathOrName: string = '/Meu Drive/Locadora/Backups'
 ): Promise<{ id: string; name: string; webViewLink?: string }> => {
   if (!accessToken) {
     throw new Error('Token de acesso do Google Drive não encontrado. Conecte sua conta do Google.');
@@ -391,6 +395,10 @@ export const uploadFileToGoogleDrive = async (
   );
 
   if (!uploadRes.ok) {
+    if (uploadRes.status === 401) {
+      clearGoogleAccessToken();
+      throw new Error('Sessão do Google Drive expirada ou não autorizada (401). Por favor, reconecte sua conta Google nas configurações.');
+    }
     const errText = await uploadRes.text();
     throw new Error(`Falha no upload para o Google Drive (${uploadRes.status}): ${errText}`);
   }

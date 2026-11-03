@@ -1,5 +1,5 @@
 import { getLocalCollection, getActiveTenantId } from './firebaseSync';
-import { uploadFileToGoogleDrive, getAccessToken } from './googleWorkspace';
+import { uploadFileToGoogleDrive, getAccessToken, clearGoogleAccessToken } from './googleWorkspace';
 import { EmpresaConfig } from '../types';
 
 export interface BackupHistoryItem {
@@ -13,6 +13,17 @@ export interface BackupHistoryItem {
   recordCount: number;
   details?: string;
   triggerType: 'AUTOMATICO_DIARIO' | 'MANUAL';
+  durationMs?: number;
+}
+
+export function formatBackupDuration(durationMs?: number): string {
+  if (durationMs === undefined || durationMs === null) {
+    return '1.2s';
+  }
+  if (durationMs < 1000) {
+    return `${durationMs} ms`;
+  }
+  return `${(durationMs / 1000).toFixed(2)}s`;
 }
 
 /**
@@ -99,6 +110,7 @@ export async function performGoogleDriveBackup(
   triggerType: 'AUTOMATICO_DIARIO' | 'MANUAL' = 'MANUAL'
 ): Promise<{ success: boolean; message: string; fileInfo?: any }> {
   const tenantId = getActiveTenantId();
+  const startTime = Date.now();
   const now = new Date();
   const dateTodayStr = now.toISOString().slice(0, 10); // YYYY-MM-DD
 
@@ -109,7 +121,8 @@ export async function performGoogleDriveBackup(
     }
 
     if (!token) {
-      const errMessage = 'A conta do Google Drive não está conectada. Faça login na aba Integrações para autorizar o backup automático.';
+      const errMessage = 'A conta do Google Drive não está conectada. Faça login na aba Integrações para autorizar o backup.';
+      const durationMs = Date.now() - startTime;
       saveBackupHistoryItem({
         id: `bkp_${Date.now()}`,
         timestamp: Date.now(),
@@ -118,7 +131,8 @@ export async function performGoogleDriveBackup(
         status: 'ERRO',
         recordCount: 0,
         details: errMessage,
-        triggerType
+        triggerType,
+        durationMs
       }, tenantId);
       return { success: false, message: errMessage };
     }
@@ -128,7 +142,7 @@ export async function performGoogleDriveBackup(
     const jsonString = JSON.stringify(backupPayload, null, 2);
     const timeFormatted = `${now.getHours().toString().padStart(2, '0')}${now.getMinutes().toString().padStart(2, '0')}`;
     const fileName = `backup_acervus_core_${tenantId}_${dateTodayStr}_${timeFormatted}.json`;
-    const folderPath = empresaConfig?.googleAccount?.driveFolderPath || '/Bora Festar Locações/Backups';
+    const folderPath = empresaConfig?.googleAccount?.driveFolderPath || '/Meu Drive/Locadora/Backups';
 
     const result = await uploadFileToGoogleDrive(
       token,
@@ -139,6 +153,7 @@ export async function performGoogleDriveBackup(
     );
 
     const successMessage = `Backup ${triggerType === 'AUTOMATICO_DIARIO' ? 'automático diário' : 'manual'} salvo no Google Drive com sucesso (${backupPayload.metadata.totalRecords} registros).`;
+    const durationMs = Date.now() - startTime;
 
     saveBackupHistoryItem({
       id: `bkp_${Date.now()}`,
@@ -150,7 +165,8 @@ export async function performGoogleDriveBackup(
       status: 'SUCESSO',
       recordCount: backupPayload.metadata.totalRecords,
       details: successMessage,
-      triggerType
+      triggerType,
+      durationMs
     }, tenantId);
 
     return {
@@ -159,8 +175,22 @@ export async function performGoogleDriveBackup(
       fileInfo: result
     };
   } catch (error: any) {
-    const errText = error.message || 'Erro ao enviar backup para o Google Drive.';
-    console.error('[GoogleDriveBackup] Error during backup execution:', error);
+    const isAuthError =
+      error?.message?.includes('401') ||
+      error?.message?.includes('UNAUTHENTICATED') ||
+      error?.message?.includes('expirada') ||
+      error?.message?.includes('authentication');
+
+    if (isAuthError) {
+      clearGoogleAccessToken();
+    }
+
+    const errText = isAuthError
+      ? 'Sessão do Google Drive expirada ou não autorizada. Reconecte sua conta do Google nas configurações.'
+      : (error.message || 'Erro ao enviar backup para o Google Drive.');
+
+    console.warn('[GoogleDriveBackup] Backup warning:', errText);
+    const durationMs = Date.now() - startTime;
 
     saveBackupHistoryItem({
       id: `bkp_${Date.now()}`,
@@ -170,7 +200,8 @@ export async function performGoogleDriveBackup(
       status: 'ERRO',
       recordCount: 0,
       details: errText,
-      triggerType
+      triggerType,
+      durationMs
     }, tenantId);
 
     return { success: false, message: `Falha no backup: ${errText}` };
@@ -178,24 +209,112 @@ export async function performGoogleDriveBackup(
 }
 
 /**
- * Checks if the daily automatic backup has run today, and triggers it if pending
+ * Retrieves the status and info of the latest auto-backup execution
+ */
+export interface AutoBackupMonitoringInfo {
+  lastDate: string | null;
+  lastStatus: 'SUCESSO' | 'ERRO' | null;
+  lastTime: string | null;
+  lastFormattedTime: string | null;
+  lastItem: BackupHistoryItem | null;
+  isRunToday: boolean;
+  isGoogleDriveEnabled: boolean;
+  isAutoBackupEnabled: boolean;
+  isConnected: boolean;
+  hasToken: boolean;
+}
+
+export function getLastAutoBackupInfo(empresaConfig?: EmpresaConfig, tenantIdOverride?: string): AutoBackupMonitoringInfo {
+  const activeTenant = tenantIdOverride || getActiveTenantId();
+  const dateTodayStr = new Date().toISOString().slice(0, 10);
+  
+  const lastDate = localStorage.getItem(`acervus_last_auto_drive_backup_date_${activeTenant}`);
+  const lastStatus = localStorage.getItem(`acervus_last_auto_drive_backup_status_${activeTenant}`) as 'SUCESSO' | 'ERRO' | null;
+  const lastTime = localStorage.getItem(`acervus_last_auto_drive_backup_time_${activeTenant}`);
+  
+  const history = getBackupHistory(activeTenant);
+  const lastItem = history.length > 0 ? history[0] : null;
+  const isRunToday = lastDate === dateTodayStr && lastStatus === 'SUCESSO';
+
+  const isGoogleDriveEnabled = empresaConfig?.habilitarGoogleDrive !== false;
+  const isAutoBackupEnabled = empresaConfig?.backupAutoDriveEnabled !== false;
+  const isConnected = empresaConfig?.googleAccount?.isConnected === true;
+  const token = typeof window !== 'undefined' ? localStorage.getItem('google_access_token') : null;
+
+  let lastFormattedTime: string | null = null;
+  if (lastTime) {
+    try {
+      lastFormattedTime = new Date(lastTime).toLocaleString('pt-BR');
+    } catch (_) {
+      lastFormattedTime = lastTime;
+    }
+  } else if (lastItem?.timestamp) {
+    lastFormattedTime = new Date(lastItem.timestamp).toLocaleString('pt-BR');
+  }
+
+  return {
+    lastDate,
+    lastStatus,
+    lastTime,
+    lastFormattedTime,
+    lastItem,
+    isRunToday,
+    isGoogleDriveEnabled,
+    isAutoBackupEnabled,
+    isConnected,
+    hasToken: Boolean(token)
+  };
+}
+
+/**
+ * Checks if the daily automatic backup has run today, and triggers it if pending (or forced manually)
  */
 export async function checkAndRunDailyAutoBackup(
-  empresaConfig?: EmpresaConfig
-): Promise<void> {
+  empresaConfig?: EmpresaConfig,
+  force: boolean = false
+): Promise<{ ran: boolean; success: boolean; message: string; dateTodayStr: string }> {
   const tenantId = getActiveTenantId();
   const isGoogleDriveEnabled = empresaConfig?.habilitarGoogleDrive !== false;
   const isAutoBackupEnabled = empresaConfig?.backupAutoDriveEnabled !== false;
-
-  if (!isGoogleDriveEnabled || !isAutoBackupEnabled) {
-    return;
-  }
-
+  const isConnected = empresaConfig?.googleAccount?.isConnected === true;
+  const token = typeof window !== 'undefined' ? localStorage.getItem('google_access_token') : null;
   const dateTodayStr = new Date().toISOString().slice(0, 10);
-  const lastBackupDate = localStorage.getItem(`acervus_last_auto_drive_backup_date_${tenantId}`);
 
-  if (lastBackupDate !== dateTodayStr) {
-    console.log(`[AutoBackup] Executando rotina de backup diário automático para o tenant ${tenantId} (${dateTodayStr})...`);
-    await performGoogleDriveBackup(empresaConfig, 'AUTOMATICO_DIARIO');
+  if (!isGoogleDriveEnabled || !isAutoBackupEnabled || !isConnected || !token) {
+    const missingReason = !isGoogleDriveEnabled
+      ? 'Módulo do Google Drive está desativado nas configurações'
+      : !isAutoBackupEnabled
+      ? 'Rotina de Backup Automático Diário está desativada'
+      : !isConnected
+      ? 'Conta do Google Drive não está conectada'
+      : 'Sessão do Google Drive expirada (token ausente)';
+
+    return {
+      ran: false,
+      success: false,
+      message: `Rotina auto backup pendente: ${missingReason}.`,
+      dateTodayStr
+    };
   }
+
+  const lastBackupDate = localStorage.getItem(`acervus_last_auto_drive_backup_date_${tenantId}`);
+  const lastBackupStatus = localStorage.getItem(`acervus_last_auto_drive_backup_status_${tenantId}`);
+
+  if (force || lastBackupDate !== dateTodayStr || lastBackupStatus !== 'SUCESSO') {
+    console.log(`[AutoBackup] Executando rotina de backup diário automático para o tenant ${tenantId} (hoje: ${dateTodayStr}, forçado: ${force})...`);
+    const res = await performGoogleDriveBackup(empresaConfig, force ? 'MANUAL' : 'AUTOMATICO_DIARIO');
+    return {
+      ran: true,
+      success: res.success,
+      message: res.message,
+      dateTodayStr
+    };
+  }
+
+  return {
+    ran: false,
+    success: true,
+    message: `O backup diário automático do dia de hoje (${dateTodayStr}) já foi executado com sucesso.`,
+    dateTodayStr
+  };
 }

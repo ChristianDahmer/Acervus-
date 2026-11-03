@@ -1,13 +1,4 @@
-import { Cliente, ItemAcervo, ReservaComItens, StatusReserva, EmpresaConfig, ThemeConfig, CategoriaItem, TransacaoFinanceira, RegistroManutencao } from '../types';
-
-import painelRedondoImg from '../assets/images/painel_redondo_decoracao_1785939361018.jpg';
-import painelOvalImg from '../assets/images/painel_oval_festa_1785939374411.jpg';
-import cilindrosImg from '../assets/images/cilindros_trio_festa_1785939385642.jpg';
-import suporteBoloImg from '../assets/images/suporte_bolo_doces_1785939398110.jpg';
-import arcoBaloesImg from '../assets/images/arco_baloes_festa_1785939412161.jpg';
-import neonHappyBirthdayImg from '../assets/images/neon_happy_birthday_1785939426242.jpg';
-import carrinhoGourmetImg from '../assets/images/carrinho_gourmet_festa_1785939439329.jpg';
-import mesaMdfImg from '../assets/images/mesa_mdf_decorativa_1785939450774.jpg';
+import { Cliente, ItemAcervo, ReservaComItens, EmpresaConfig, ThemeConfig, CategoriaItem, TransacaoFinanceira, RegistroManutencao } from '../types';
 
 export const INITIAL_CATEGORIAS: CategoriaItem[] = [
   {
@@ -53,18 +44,18 @@ export const INITIAL_CATEGORIAS: CategoriaItem[] = [
 ];
 
 export const INITIAL_EMPRESA_CONFIG: EmpresaConfig = {
-  nomeFantasia: 'Bora Festar Locações',
-  razaoSocial: 'Bora Festar Eventos e Festas LTDA',
-  cnpj: '45.678.910/0001-23',
-  ramoAtuacao: 'Locação de Móveis e Decoração para Eventos (Casamentos, 15 Anos, Corporativos)',
+  nomeFantasia: '',
+  razaoSocial: '',
+  cnpj: '',
+  ramoAtuacao: 'Locação de Móveis e Decoração para Eventos',
   ambienteSistema: 'producao',
-  enderecoCompleto: 'Rua das Festas, 500 - Centro, São Paulo - SP',
-  linkMapaLocalizacao: 'https://maps.google.com/?q=Rua+das+Festas,+500+-+Centro,+São+Paulo+-+SP',
-  telefoneWhatsapp: '5511999998888',
+  enderecoCompleto: '',
+  linkMapaLocalizacao: '',
+  telefoneWhatsapp: '',
   telefonesAdicionais: [],
-  nomeRepresentante: 'Responsável da Empresa',
+  nomeRepresentante: '',
   representantesAdicionais: [],
-  logoUrl: '/logo.png',
+  logoUrl: '',
   listVisibility: {
     exibirInventarioPorPadrao: true,
     exibirCategoriasPorPadrao: true,
@@ -82,13 +73,15 @@ export const INITIAL_EMPRESA_CONFIG: EmpresaConfig = {
   habilitarGoogleForms: true,
   backupAutoDriveEnabled: true,
   pixTipoChave: 'CNPJ',
-  pixChave: '45.678.910/0001-23',
+  pixChave: '',
   bancoNome: '',
   bancoAgencia: '',
   bancoConta: '',
   bancoTipoConta: 'CORRENTE',
   bancoBeneficiario: '',
   bancoDocumento: '',
+  valorFretePorKm: 2.5,
+  numeroDeslocamentosFrete: 4,
 };
 
 export const INITIAL_THEME_CONFIG: ThemeConfig = {
@@ -99,309 +92,15 @@ export const INITIAL_THEME_CONFIG: ThemeConfig = {
 };
 
 
-export const INITIAL_CLIENTES: Cliente[] = [
-  { id: 1, nome: 'Ana Carolina Silva', telefone: '5511987654321', email: 'ana.silva@email.com' },
-  { id: 2, nome: 'Carlos Eduardo Santos', telefone: '5511976543210', email: 'carlos.santos@email.com' },
-  { id: 3, nome: 'Mariana Oliveira', telefone: '5521998877665', email: 'mariana.oliveira@email.com' },
-  { id: 4, nome: 'Lucas Mendes', telefone: '5531988112233', email: 'lucas.mendes@email.com' },
-];
+export const INITIAL_CLIENTES: Cliente[] = [];
 
-export const INITIAL_ITENS: ItemAcervo[] = [
-  {
-    id: 1,
-    nome: 'Painel Redondo',
-    descricao: 'Painel circular de MDF desmontável com 1,80m de diâmetro, ideal para fundos de mesa de bolo e arranjos de balões.',
-    quantidadeTotal: 10,
-    precoAluguel: 50.0,
-    categoria: 'Painéis & Decoração',
-    imageUrl: painelRedondoImg,
-    ultimaManutencao: Date.now() - 1000 * 60 * 60 * 24 * 30, // 30 dias atrás
-    frequenciaAlugueisManutencao: 5,
-    alugueisDesdeManutencao: 2,
-    statusManutencao: 'EM_DIA',
-    proximaRevisaoData: Date.now() + 1000 * 60 * 60 * 24 * 60,
-  },
-  {
-    id: 2,
-    nome: 'Painel Oval',
-    descricao: 'Painel decorativo formato arco/oval de estilo moderno, estrutura reforçada para aplicação de tecidos e artes temáticas.',
-    quantidadeTotal: 8,
-    precoAluguel: 50.0,
-    categoria: 'Painéis & Decoração',
-    imageUrl: painelOvalImg,
-    ultimaManutencao: Date.now() - 1000 * 60 * 60 * 24 * 15,
-    frequenciaAlugueisManutencao: 5,
-    alugueisDesdeManutencao: 1,
-    statusManutencao: 'EM_DIA',
-  },
-  {
-    id: 3,
-    nome: 'Cilindros (Trio Decorativo)',
-    descricao: 'Conjunto com 3 cilindros de tamanhos P, M e G em MDF laqueado branco para apoio de bolos, doces e peças decorativas.',
-    quantidadeTotal: 12,
-    precoAluguel: 25.0,
-    categoria: 'Móveis & Suportes',
-    imageUrl: cilindrosImg,
-    ultimaManutencao: Date.now() - 1000 * 60 * 60 * 24 * 40,
-    frequenciaAlugueisManutencao: 6,
-    alugueisDesdeManutencao: 5,
-    statusManutencao: 'EM_DIA',
-  },
-  {
-    id: 4,
-    nome: 'Mesa Redonda MDF',
-    descricao: 'Mesa bistrô/principal para doces de festa com tampo redondo de 1,20m e pés palito reforçados.',
-    quantidadeTotal: 6,
-    precoAluguel: 50.0,
-    categoria: 'Móveis & Suportes',
-    imageUrl: mesaMdfImg,
-    ultimaManutencao: Date.now() - 1000 * 60 * 60 * 24 * 10,
-    frequenciaAlugueisManutencao: 4,
-    alugueisDesdeManutencao: 0,
-    statusManutencao: 'EM_DIA',
-  },
-  {
-    id: 5,
-    nome: 'Mesa Sextavada MDF / Cubo',
-    quantidadeTotal: 8,
-    precoAluguel: 40.0,
-    categoria: 'Móveis & Suportes',
-    imageUrl: mesaMdfImg,
-    ultimaManutencao: Date.now() - 1000 * 60 * 60 * 24 * 45,
-    frequenciaAlugueisManutencao: 4,
-    alugueisDesdeManutencao: 4,
-    statusManutencao: 'ALERTA', // Atingiu limite de alugueis sem revisão
-  },
-  {
-    id: 6,
-    nome: 'Suporte para Bolos e Doces (Kit 5 Peças)',
-    quantidadeTotal: 15,
-    precoAluguel: 20.0,
-    categoria: 'Vasos & Bandejas',
-    imageUrl: suporteBoloImg,
-    ultimaManutencao: Date.now() - 1000 * 60 * 60 * 24 * 60,
-    frequenciaAlugueisManutencao: 10,
-    alugueisDesdeManutencao: 2,
-    statusManutencao: 'EM_DIA',
-  },
-  {
-    id: 7,
-    nome: 'Escada de Lembrancinhas MDF',
-    quantidadeTotal: 5,
-    precoAluguel: 30.0,
-    categoria: 'Móveis & Suportes',
-    imageUrl: mesaMdfImg,
-    ultimaManutencao: Date.now() - 1000 * 60 * 60 * 24 * 12,
-    frequenciaAlugueisManutencao: 6,
-    alugueisDesdeManutencao: 0,
-    statusManutencao: 'EM_DIA',
-  },
-  {
-    id: 8,
-    nome: 'Kit Arco de Balões Desconstruído',
-    quantidadeTotal: 7,
-    precoAluguel: 35.0,
-    categoria: 'Painéis & Decoração',
-    imageUrl: arcoBaloesImg,
-    ultimaManutencao: Date.now() - 1000 * 60 * 60 * 24 * 80,
-    frequenciaAlugueisManutencao: 3,
-    alugueisDesdeManutencao: 3,
-    statusManutencao: 'ALERTA',
-  },
-  {
-    id: 9,
-    nome: 'Cortina de LED Neon "Happy Birthday"',
-    quantidadeTotal: 4,
-    precoAluguel: 45.0,
-    categoria: 'Iluminação & Som',
-    imageUrl: neonHappyBirthdayImg,
-    ultimaManutencao: Date.now() - 1000 * 60 * 60 * 24 * 5, // 5 dias atrás
-    frequenciaAlugueisManutencao: 3,
-    alugueisDesdeManutencao: 4, // estourou frequencia!
-    statusManutencao: 'ALERTA',
-  },
-  {
-    id: 10,
-    nome: 'Carrinho de Pipoca & Brigadeiro Gourmet',
-    quantidadeTotal: 3,
-    precoAluguel: 80.0,
-    categoria: 'Móveis & Suportes',
-    imageUrl: carrinhoGourmetImg,
-    ultimaManutencao: Date.now() - 1000 * 60 * 60 * 24 * 90,
-    frequenciaAlugueisManutencao: 5,
-    alugueisDesdeManutencao: 1,
-    statusManutencao: 'EM_DIA',
-  },
-  {
-    id: 11,
-    nome: 'Tapete Grama Sintética 2x2m',
-    quantidadeTotal: 10,
-    precoAluguel: 30.0,
-    categoria: 'Painéis & Decoração',
-    imageUrl: neonHappyBirthdayImg,
-    ultimaManutencao: Date.now() - 1000 * 60 * 60 * 24 * 120,
-    frequenciaAlugueisManutencao: 8,
-    alugueisDesdeManutencao: 8,
-    statusManutencao: 'ALERTA',
-  },
-  {
-    id: 12,
-    nome: 'Caixa de Som Portátil JBL Partybox 310',
-    quantidadeTotal: 4,
-    precoAluguel: 120.0,
-    categoria: 'Iluminação & Som',
-    imageUrl: 'https://images.unsplash.com/photo-1545454675-3531b543be5d?auto=format&fit=crop&w=600&q=80',
-    ultimaManutencao: Date.now() - 1000 * 60 * 60 * 24 * 1,
-    frequenciaAlugueisManutencao: 4,
-    alugueisDesdeManutencao: 0,
-    statusManutencao: 'EM_MANUTENCAO', // Sob revisão ativa
-  },
-];
+export const INITIAL_ITENS: ItemAcervo[] = [];
 
-const today = new Date();
-const start1 = new Date(today.getTime() + 1000 * 60 * 60 * 24 * 1); // tomorrow
-const end1 = new Date(today.getTime() + 1000 * 60 * 60 * 24 * 4); // +4 days
+export const INITIAL_RESERVAS: ReservaComItens[] = [];
 
-const start2 = new Date(today.getTime() - 1000 * 60 * 60 * 24 * 2); // 2 days ago
-const end2 = new Date(today.getTime() + 1000 * 60 * 60 * 24 * 2); // +2 days
+export const INITIAL_FINANCE_TRANSACTIONS: TransacaoFinanceira[] = [];
 
-export const INITIAL_RESERVAS: ReservaComItens[] = [
-  {
-    reserva: {
-      id: 1001,
-      clienteId: 1,
-      dataRetirada: start1.getTime(),
-      dataDevolucao: end1.getTime(),
-      status: StatusReserva.CONFIRMADA,
-    },
-    cliente: INITIAL_CLIENTES[0],
-    itens: [INITIAL_ITENS[0], INITIAL_ITENS[1]], // Painel Redondo (50) + Painel Oval (50)
-    valorTotal: (50 + 50) * 3,
-    diasReserva: 3,
-  },
-  {
-    reserva: {
-      id: 1002,
-      clienteId: 2,
-      dataRetirada: start2.getTime(),
-      dataDevolucao: end2.getTime(),
-      status: StatusReserva.EM_ANDAMENTO,
-    },
-    cliente: INITIAL_CLIENTES[1],
-    itens: [INITIAL_ITENS[2]], // Cilindros (25)
-    valorTotal: 25 * 4,
-    diasReserva: 4,
-  },
-];
-
-export const INITIAL_FINANCE_TRANSACTIONS: TransacaoFinanceira[] = [
-  {
-    id: 'TX-1001',
-    tipo: 'RECEITA',
-    categoria: 'Aluguel de Acervo',
-    valor: 300.00,
-    data: today.getTime() - 1000 * 60 * 60 * 24 * 1, // 1 dia atrás
-    descricao: 'Receita Reserva #1001 - Ana Carolina Silva',
-    referenciaId: '1001',
-    status: 'PAGO'
-  },
-  {
-    id: 'TX-1002',
-    tipo: 'RECEITA',
-    categoria: 'Aluguel de Acervo',
-    valor: 100.00,
-    data: today.getTime() - 1000 * 60 * 60 * 24 * 2, // 2 dias atrás
-    descricao: 'Receita Reserva #1002 - Carlos Eduardo Santos',
-    referenciaId: '1002',
-    status: 'PAGO'
-  },
-  {
-    id: 'TX-3',
-    tipo: 'RECEITA',
-    categoria: 'Serviço de Frete',
-    valor: 180.00,
-    data: today.getTime() - 1000 * 60 * 60 * 24 * 3,
-    descricao: 'Frete e montagem - Evento Condomínio Ipês',
-    status: 'PAGO'
-  },
-  {
-    id: 'TX-4',
-    tipo: 'DESPESA',
-    categoria: 'Manutenção de Itens',
-    valor: 85.00,
-    data: today.getTime() - 1000 * 60 * 60 * 24 * 5,
-    descricao: 'Reparo Fiação Cortina de LED Happy Birthday',
-    referenciaId: '9',
-    status: 'PAGO'
-  },
-  {
-    id: 'TX-5',
-    tipo: 'DESPESA',
-    categoria: 'Manutenção de Itens',
-    valor: 120.00,
-    data: today.getTime() - 1000 * 60 * 60 * 24 * 10,
-    descricao: 'Pintura e Polimento Mesa Sextavada MDF',
-    referenciaId: '5',
-    status: 'PAGO'
-  },
-  {
-    id: 'TX-6',
-    tipo: 'DESPESA',
-    categoria: 'Insumos',
-    valor: 250.00,
-    data: today.getTime() - 1000 * 60 * 60 * 24 * 15,
-    descricao: 'Balões diversos, tecidos de cetim, fita dupla face',
-    status: 'PAGO'
-  },
-  {
-    id: 'TX-7',
-    tipo: 'DESPESA',
-    categoria: 'Logística',
-    valor: 95.00,
-    data: today.getTime() - 1000 * 60 * 60 * 24 * 2,
-    descricao: 'Combustível veículo utilitário - Entregas Zona Sul',
-    status: 'PAGO'
-  },
-  {
-    id: 'TX-8',
-    tipo: 'DESPESA',
-    categoria: 'Assinaturas',
-    valor: 54.90,
-    data: today.getTime() - 1000 * 60 * 60 * 24 * 8,
-    descricao: 'Assinatura Mensal Google Workspace & Drive',
-    status: 'PAGO'
-  }
-];
-
-export const INITIAL_MAINTENANCE_LOGS: RegistroManutencao[] = [
-  {
-    id: 'M-1',
-    itemId: 9,
-    data: today.getTime() - 1000 * 60 * 60 * 24 * 5,
-    tipo: 'Reparo de Fiação',
-    custo: 85.00,
-    observacao: 'Fiação re-soldada, isolação reforçada para segurança em eventos',
-    responsavel: 'Eletrotécnica Jairo'
-  },
-  {
-    id: 'M-2',
-    itemId: 5,
-    data: today.getTime() - 1000 * 60 * 60 * 24 * 10,
-    tipo: 'Pintura e Polimento',
-    custo: 120.00,
-    observacao: 'Pintura esmalte premium branca anti-riscos nos tampos',
-    responsavel: 'Marcenaria Silva'
-  },
-  {
-    id: 'M-3',
-    itemId: 12,
-    data: today.getTime() - 1000 * 60 * 60 * 24 * 1,
-    tipo: 'Limpeza Geral',
-    custo: 0.00,
-    observacao: 'Limpeza profunda de poeira da grade frontal e testes de bateria',
-    responsavel: 'Equipe Própria'
-  }
-];
+export const INITIAL_MAINTENANCE_LOGS: RegistroManutencao[] = [];
 
 export const INITIAL_MODELOS_CONTRATO: any[] = [
   {

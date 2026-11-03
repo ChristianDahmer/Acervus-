@@ -250,9 +250,9 @@ const DOCUMENT_SAMPLES = [
       ctx.fillText('DADOS DO CLIENTE:', 40, 125);
       
       ctx.font = '10px sans-serif';
-      ctx.fillText('Nome: Juliana Prestes Silveira  |  E-mail: juliana@prestes.com', 40, 145);
-      ctx.fillText('Telefone: (41) 99912-8833  |  CPF: 999.888.777-66', 40, 162);
-      ctx.fillText('Endereço do Evento: Salão de Festas Solar, Rua XV, 450, Curitiba', 40, 179);
+      ctx.fillText('Nome: Mariana Duarte Santos  |  E-mail: mariana.santos@email.com', 40, 145);
+      ctx.fillText('Telefone: (41) 98765-4321  |  CPF: 000.000.000-00', 40, 162);
+      ctx.fillText('Endereço do Evento: Espaço de Festas Exemplo, Rua das Flores, 100, Curitiba', 40, 179);
       
       // Items grid
       ctx.fillStyle = '#f4efe6';
@@ -319,7 +319,7 @@ const DOCUMENT_SAMPLES = [
       ctx.stroke();
       ctx.fillStyle = '#3e3835';
       ctx.font = '9px sans-serif';
-      ctx.fillText('Juliana Prestes Silveira', 290, 635);
+      ctx.fillText('Mariana Duarte Santos', 290, 635);
     }
   }
 ];

@@ -69,6 +69,7 @@ export const NovaReservaModal: React.FC<NovaReservaModalProps> = ({ clientes = [
   const [distanciaKm, setDistanciaKm] = useState<number>(0);
   const [valorFrete, setValorFrete] = useState<number>(0);
   const [valorFretePorKm, setValorFretePorKm] = useState<number>(empresaConfig?.valorFretePorKm || 0);
+  const [numeroDeslocamentosFrete, setNumeroDeslocamentosFrete] = useState<number>(empresaConfig?.numeroDeslocamentosFrete || 4);
   const [calculandoFrete, setCalculandoFrete] = useState<boolean>(false);
 
   // Sync with company config value when it changes
@@ -76,13 +77,16 @@ export const NovaReservaModal: React.FC<NovaReservaModalProps> = ({ clientes = [
     if (empresaConfig?.valorFretePorKm !== undefined) {
       setValorFretePorKm(empresaConfig.valorFretePorKm);
     }
+    if (empresaConfig?.numeroDeslocamentosFrete !== undefined) {
+      setNumeroDeslocamentosFrete(empresaConfig.numeroDeslocamentosFrete);
+    }
   }, [empresaConfig]);
 
-  // Recalculate freight cost when distance or rate per km changes
+  // Recalculate freight cost when distance, rate per km or number of legs changes
   useEffect(() => {
-    const calculated = calcularValorFrete(distanciaKm, valorFretePorKm);
+    const calculated = calcularValorFrete(distanciaKm, valorFretePorKm, numeroDeslocamentosFrete);
     setValorFrete(calculated);
-  }, [distanciaKm, valorFretePorKm]);
+  }, [distanciaKm, valorFretePorKm, numeroDeslocamentosFrete]);
 
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
   const [selectedCategoria, setSelectedCategoria] = useState<string>('Todas');
@@ -230,6 +234,7 @@ export const NovaReservaModal: React.FC<NovaReservaModalProps> = ({ clientes = [
       valorFrete: valorFrete || undefined,
       distanciaKm: distanciaKm || undefined,
       valorFretePorKm: valorFretePorKm || undefined,
+      numeroDeslocamentosFrete: numeroDeslocamentosFrete || undefined,
     });
   };
 
@@ -386,16 +391,26 @@ export const NovaReservaModal: React.FC<NovaReservaModalProps> = ({ clientes = [
                     setCalculandoFrete(true);
                     setErrorMessage(null);
                     try {
+                      const origemAddress = empresaConfig?.enderecoCompleto || formatEnderecoCompleto({
+                        logradouro: empresaConfig?.rua,
+                        numero: empresaConfig?.numero,
+                        bairro: empresaConfig?.bairro,
+                        cidade: empresaConfig?.cidade,
+                        estado: empresaConfig?.uf,
+                        cep: empresaConfig?.cep,
+                      }) || 'São Paulo, SP';
+
                       const res = await calcularDistanciaRealOuSimulada(
-                        empresaConfig?.enderecoCompleto || 'Rua das Flores, 100 - São Paulo, SP',
+                        origemAddress,
                         endereco,
                         empresaConfig?.googleMapsApiKey
                       );
+                      
                       setDistanciaKm(res.distanciaKm);
                       const frete = calcularValorFrete(res.distanciaKm, valorFretePorKm);
                       setValorFrete(frete);
                     } catch (err) {
-                      setErrorMessage('Erro ao calcular deslocamento no Google Maps.');
+                      setErrorMessage('Erro ao calcular deslocamento no mapa.');
                     } finally {
                       setCalculandoFrete(false);
                     }
@@ -407,7 +422,7 @@ export const NovaReservaModal: React.FC<NovaReservaModalProps> = ({ clientes = [
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-[#E4E4E7]">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs text-[#E4E4E7]">
                 <div>
                   <label className="block text-[10px] text-[#A1A1AA] mb-1 uppercase tracking-wider font-semibold">Valor por Km (R$/Km)</label>
                   <input
@@ -418,21 +433,50 @@ export const NovaReservaModal: React.FC<NovaReservaModalProps> = ({ clientes = [
                     onChange={(e) => {
                       const rate = parseCurrencyBRLToNumber(e.target.value);
                       setValorFretePorKm(rate);
+                      const frete = calcularValorFrete(distanciaKm, rate, numeroDeslocamentosFrete);
+                      setValorFrete(frete);
                     }}
                     className="w-full px-3 py-2 bg-[#111113] border border-[#27272A] rounded-lg text-white font-mono focus:border-[#D4AF37] focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] text-[#A1A1AA] mb-1 uppercase tracking-wider font-semibold">Distância de Ida (Km)</label>
-                  <div className="w-full px-3 py-2 bg-[#111113] border border-[#27272A] rounded-lg text-white font-mono flex items-center justify-between">
-                    <span>{distanciaKm}</span>
-                    <span className="text-[#71717A] text-[10px]">Km</span>
-                  </div>
+                  <label className="block text-[10px] text-[#A1A1AA] mb-1 uppercase tracking-wider font-semibold">Distância 1 Trecho (Km)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    placeholder="0"
+                    value={distanciaKm || ''}
+                    onChange={(e) => {
+                      const newKm = parseFloat(e.target.value) || 0;
+                      setDistanciaKm(newKm);
+                      const frete = calcularValorFrete(newKm, valorFretePorKm, numeroDeslocamentosFrete);
+                      setValorFrete(frete);
+                    }}
+                    className="w-full px-3 py-2 bg-[#111113] border border-[#27272A] rounded-lg text-white font-mono focus:border-[#D4AF37] focus:outline-none"
+                  />
                 </div>
 
                 <div>
-                  <label className="block text-[10px] text-[#A1A1AA] mb-1 uppercase tracking-wider font-semibold">Custo do Frete</label>
+                  <label className="block text-[10px] text-[#A1A1AA] mb-1 uppercase tracking-wider font-semibold">Nº Deslocamentos</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={numeroDeslocamentosFrete}
+                    onChange={(e) => {
+                      const legs = Math.max(1, parseInt(e.target.value) || 4);
+                      setNumeroDeslocamentosFrete(legs);
+                      const frete = calcularValorFrete(distanciaKm, valorFretePorKm, legs);
+                      setValorFrete(frete);
+                    }}
+                    className="w-full px-3 py-2 bg-[#111113] border border-[#27272A] rounded-lg text-[#D4AF37] font-mono font-bold focus:border-[#D4AF37] focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] text-[#A1A1AA] mb-1 uppercase tracking-wider font-semibold">Total do Frete (R$)</label>
                   <input
                     type="text"
                     required
@@ -447,11 +491,10 @@ export const NovaReservaModal: React.FC<NovaReservaModalProps> = ({ clientes = [
                 </div>
               </div>
 
-              {distanciaKm > 0 && (
-                <p className="text-[10px] text-[#71717A] leading-normal">
-                  * Deslocamento baseado no endereço da empresa (<span className="italic">{empresaConfig?.enderecoCompleto || 'Rua das Flores, 100 - São Paulo, SP'}</span>) até o local do evento.
-                </p>
-              )}
+              <div className="text-[10px] text-[#71717A] leading-normal bg-[#111113] p-2 rounded-lg border border-[#27272A] flex items-center justify-between">
+                <span>Composição: <strong>{distanciaKm} Km × {formatCurrencyBRL(valorFretePorKm)}/Km × {numeroDeslocamentosFrete} deslocamentos (2 idas + 2 voltas)</strong></span>
+                <span className="text-[#D4AF37] font-mono font-bold">{formatCurrencyBRL(valorFrete)}</span>
+              </div>
             </div>
 
             {/* Same-day Time Pickers */}

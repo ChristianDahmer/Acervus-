@@ -86,6 +86,7 @@ export interface Reserva {
   valorFrete?: number; // NOVO: Valor calculado do frete
   distanciaKm?: number; // NOVO: Distância em quilômetros
   valorFretePorKm?: number; // NOVO: Valor por km cobrado nesta reserva
+  numeroDeslocamentosFrete?: number; // NOVO: Número de deslocamentos considerados no frete (padrão 4)
   contratarMontagem?: boolean; // NOVO: Se o cliente contratou montagem/desmontagem no local
   valorMontagem?: number; // NOVO: Valor cobrado pelo serviço de montagem
 }
@@ -165,12 +166,14 @@ export interface FormularioWeb {
     valorFrete?: number; // NOVO: Valor calculado do frete
     distanciaKm?: number; // NOVO: Distância calculada
     valorFretePorKm?: number; // NOVO: Valor por km cobrado
+    numeroDeslocamentosFrete?: number; // NOVO: Número de deslocamentos considerados no frete (padrão 4)
     contratarMontagem?: boolean; // NOVO: Se o cliente marcou contratação de montagem
     valorMontagem?: number; // NOVO: Valor da montagem contratada
   };
-  valorFrete?: number; // NOVO: Valor calculado do frete na proposta
+  valorFrete?: number; // NOVO: Valor calculated do frete na proposta
   distanciaKm?: number; // NOVO: Distância calculada na proposta
   valorFretePorKm?: number; // NOVO: Valor por km cobrado na proposta
+  numeroDeslocamentosFrete?: number; // NOVO: Número de deslocamentos considerados no frete (padrão 4)
 }
 
 export interface CategoriaItem {
@@ -201,6 +204,54 @@ export interface ListVisibilityConfig {
 }
 
 export type WhatsAppTemplatesConfig = Record<string, string>;
+
+export interface WhatsAppReceiptData {
+  eComprovante: boolean;
+  tipoComprovante?: 'PIX' | 'TED' | 'DOC' | 'TRANSFERENCIA' | 'OUTRO';
+  valorIdentificado?: number;
+  nomePagador?: string;
+  cpfPagador?: string;
+  dataHoraTransacao?: string;
+  codigoAutenticacao?: string;
+  bancoOrigem?: string;
+  bancoDestino?: string;
+  reservaCorrespondenteId?: number;
+  confiancaAnalise?: number;
+}
+
+export interface WhatsAppClientIdentification {
+  isClienteExistente: boolean;
+  clienteIdMatched?: number;
+  nomeIdentificado: string;
+  telefoneMatched?: string;
+  tipoEvento?: string;
+  dataEventoMencionada?: string;
+  itensInteresse?: string[];
+  grauInteresse?: 'ALTO' | 'MEDIO' | 'BAIXO';
+}
+
+export interface WhatsAppAiAnalysis {
+  intent: 'COMPROVANTE_PAGAMENTO' | 'NOVO_ORCAMENTO' | 'DUVIDA_RESERVA' | 'CANCELAMENTO' | 'SUPORTE_GERAL';
+  resumoAtendimento: string;
+  clienteIdentification: WhatsAppClientIdentification;
+  receiptData?: WhatsAppReceiptData;
+  respostaSugeridaIA: string;
+  acaoRecomendada: 'CONFIRMAR_PAGAMENTO' | 'CADASTRAR_CLIENTE' | 'CRIAR_RESERVA' | 'RESPONDER_DUVIDA' | 'NENHUMA';
+  scoreConfianca: number;
+}
+
+export interface WhatsAppIncomingMessage {
+  id: string;
+  fromPhone: string;
+  fromName?: string;
+  timestamp: number;
+  mensagemTexto: string;
+  midiaUrl?: string;
+  midiaTipo?: 'image' | 'document' | 'audio' | 'none';
+  statusProcessamento: 'PROCESSANDO' | 'ANALISADO' | 'PAGAMENTO_CONFIRMADO' | 'CLIENTE_CADASTRADO' | 'FALHA';
+  aiAnalysis?: WhatsAppAiAnalysis;
+  webhookSource?: string;
+}
 
 export interface GovBrConfig {
   clientId: string;
@@ -316,6 +367,7 @@ export interface EmpresaConfig {
   backupAutoDriveEnabled?: boolean;
   googleAccount?: GoogleAccountConfig;
   valorFretePorKm?: number; // NOVO: Valor padrão cobrado por quilômetro de deslocamento para frete
+  numeroDeslocamentosFrete?: number; // NOVO: Composição do frete em número de deslocamentos (padrão 4: 2 idas + 2 voltas)
   pixTipoChave?: 'CNPJ' | 'CPF' | 'E-MAIL' | 'TELEFONE' | 'CHAVE_ALEATORIA';
   pixChave?: string;
   bancoNome?: string;
@@ -376,6 +428,7 @@ export interface DispositivoAutorizado {
   dataAtualizacao: number; // timestamp ms
   ultimoAcesso?: number; // timestamp ms
   nivelAcesso?: 'OPERADOR' | 'GERENTE' | 'ADMINISTRADOR' | 'DESENVOLVEDOR';
+  isMasterSuperAdmin?: boolean; // Usuário Mestre com Gestão Plena Global e Cross-Tenant
   permissoesModulos?: string[]; // e.g. ['inventario', 'reservas', 'clientes', 'financeiro', 'manutencao', 'relatorios']
 }
 

@@ -1,9 +1,10 @@
 import React from 'react';
 import { getAppLogoUrl, handleLogoError } from '../utils/logoUtils';
 import { AcervusSystemLogo } from './AcervusSystemLogo';
-import { Package, Calendar, Users, Share2, Cpu, Code2, Building2, Plus, DollarSign, Wrench, FileText, Sparkles, ChevronDown, FolderKanban, MessageSquare, Palette, HardDrive, ShieldCheck, Smartphone, Instagram, FileSpreadsheet, LogOut, Layers, Pin, Sliders, Database, BookOpen, Crown } from 'lucide-react';
+import { Package, Calendar, Users, Share2, Cpu, Code2, Building2, Plus, DollarSign, Wrench, FileText, Sparkles, ChevronDown, FolderKanban, MessageSquare, Palette, HardDrive, ShieldCheck, Smartphone, Instagram, FileSpreadsheet, LogOut, Layers, Pin, Sliders, Database, BookOpen, Crown, Download } from 'lucide-react';
 import { DispositivoAutorizado, ThemeConfig, EmpresaConfig } from '../types';
 import { getContrastTextColor } from '../utils/themeUtils';
+import { SYSTEM_VERSION } from '../config/version';
 
 interface NavbarProps {
   activeTab: string;
@@ -88,13 +89,14 @@ export const Navbar: React.FC<NavbarProps> = ({
     {
       title: 'Canais & Integrações',
       items: [
-        { id: 'whatsapp', label: 'Mensagens WhatsApp', icon: MessageSquare, type: 'subtab', target: 'empresa' },
+        { id: 'whatsapp', label: 'Mensagens WhatsApp (IA)', icon: MessageSquare, type: 'subtab', target: 'empresa' },
         { id: 'instagram_sorteio', label: 'Sorteios Instagram', icon: Instagram, type: 'subtab', target: 'empresa' },
       ],
     },
     {
       title: 'Sistema & Segurança',
       items: [
+        { id: 'instalacao_app', label: 'Instalar no Android & PC', icon: Download, type: 'subtab', target: 'empresa' },
         { id: 'permissoes', label: 'Permissões de Acesso', icon: Users, type: 'subtab', target: 'empresa' },
         { id: 'dispositivos', label: 'Usuários Acesso', icon: Smartphone, type: 'subtab', target: 'empresa' },
         { id: 'sincronizacao', label: 'Sincronização & Worker', icon: Cpu, type: 'subtab', target: 'empresa' },
@@ -245,6 +247,14 @@ export const Navbar: React.FC<NavbarProps> = ({
                     <span>MODO TESTE</span>
                   </div>
                 )}
+
+                {/* System Version Badge */}
+                <div 
+                  title="Versão Atual do Acervus Core"
+                  className="text-[9px] font-mono font-bold tracking-wider px-2 py-0.5 rounded-md border flex items-center gap-1 shadow-sm bg-[#18181B] border-[#D4AF37]/30 text-[#D4AF37]"
+                >
+                  <span>{SYSTEM_VERSION}</span>
+                </div>
 
 
               </div>

@@ -80,7 +80,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
 
   const [filterStatus, setFilterStatus] = useState<string>('TODOS');
   const [showOnlyFuture, setShowOnlyFuture] = useState(false);
-  const [modoCalendario, setModoCalendario] = useState<ModoCalendario>('SEMANAL');
+  const [modoCalendario, setModoCalendario] = useState<ModoCalendario>('MENSAL');
   const [anchorDate, setAnchorDate] = useState<Date>(() => new Date());
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
   const [selectionMode, setSelectionMode] = useState<'INDIVIDUAL' | 'INTERVALO'>('INDIVIDUAL');
@@ -88,7 +88,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
   const [rangeEnd, setRangeEnd] = useState<string | null>(null);
 
   // Floating Drawer / Card Flutuante state
-  const [isCalendarOpen, setIsCalendarOpen] = useState(true);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [isCalendarMinimized, setIsCalendarMinimized] = useState(false);
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -279,7 +279,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
         setSelectedDates([...selectedDates, dateKey]);
       }
     } else {
-      // INTERVALO selection mode
+      // INTERVALO selection mode - limitado a no máximo 7 datas
       if (!rangeStart || (rangeStart && rangeEnd)) {
         setRangeStart(dateKey);
         setRangeEnd(null);
@@ -289,9 +289,14 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
           setRangeStart(dateKey);
           setSelectedDates([dateKey]);
         } else {
-          setRangeEnd(dateKey);
-          const range = getDatesInRange(rangeStart, dateKey);
+          let range = getDatesInRange(rangeStart, dateKey);
+          if (range.length > 7) {
+            range = range.slice(0, 7);
+          }
+          const finalDate = range[range.length - 1];
+          setRangeEnd(finalDate);
           setSelectedDates(range);
+          setIsCalendarOpen(false);
         }
       }
     }
@@ -308,6 +313,10 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
     startOfToday.setHours(0, 0, 0, 0);
     const startOfTodayTime = startOfToday.getTime();
 
+    // Início e Fim do mês atual (anchorDate)
+    const startOfMonth = new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1, 0, 0, 0, 0).getTime();
+    const endOfMonth = new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 0, 23, 59, 59, 999).getTime();
+
     return reservas.filter((r) => {
       if (filterStatus !== 'TODOS' && r.reserva.status !== filterStatus) return false;
 
@@ -321,6 +330,10 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
           return r.reserva.dataRetirada <= dEnd && r.reserva.dataDevolucao >= dStart;
         });
         if (!overlapsAny) return false;
+      } else {
+        // Por padrão: apresenta todas as reservas do mês (anchorDate)
+        const overlapsMonth = r.reserva.dataRetirada <= endOfMonth && r.reserva.dataDevolucao >= startOfMonth;
+        if (!overlapsMonth) return false;
       }
 
       if (term) {
@@ -332,7 +345,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
 
       return true;
     });
-  }, [reservas, filterStatus, selectedDates, searchTerm, showOnlyFuture]);
+  }, [reservas, filterStatus, selectedDates, searchTerm, showOnlyFuture, anchorDate]);
 
   const paginatedReservas = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
@@ -408,12 +421,12 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
             </button>
           </h2>
           <p className="text-[#A1A1AA] text-xs mt-1.5">Acompanhe retiradas, devoluções e contratos em aberto</p>
-          <div className="flex items-center gap-2 mt-3">
+          <div className="w-full mt-3">
             <button
               onClick={onOpenNovaReserva}
-              className="inline-flex items-center justify-center gap-1.5 bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A0A0B] px-3 h-[36px] rounded-lg text-[11px] font-bold uppercase tracking-wider shadow-md shadow-[#D4AF37]/5 transition-all cursor-pointer whitespace-nowrap shrink-0"
+              className="w-full inline-flex items-center justify-center gap-2 bg-[#D4AF37] hover:bg-[#E5C158] text-[#0A0A0B] px-4 h-[40px] rounded-xl text-xs font-bold uppercase tracking-wider shadow-md shadow-[#D4AF37]/10 transition-all cursor-pointer"
             >
-              <Plus size={13} />
+              <Plus size={15} />
               <span>Criar Reserva</span>
             </button>
           </div>
@@ -528,14 +541,12 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
             <div>
               <h3 className="text-xs sm:text-sm font-semibold text-white flex items-center gap-2">
                 <span>Calendário de Reservas</span>
-                {isCalendarOpen && (
-                  <span className="text-[10px] font-mono text-[#D4AF37] bg-[#18181B] px-2 py-0.5 rounded border border-[#27272A]">
-                    {getHeaderPeriodText()}
-                  </span>
-                )}
+                <span className="text-[10px] font-mono text-[#D4AF37] bg-[#18181B] px-2 py-0.5 rounded border border-[#27272A]">
+                  {getHeaderPeriodText()}
+                </span>
               </h3>
               <p className="text-[10px] text-[#71717A]">
-                Clique em Semanal, Quinzenal ou Mensal para abrir o calendário flutuante suspenso abaixo
+                Exibindo reservas do mês ({getHeaderPeriodText()}) • Clique em Mensal, Quinzenal ou Semanal para abrir o calendário
               </p>
             </div>
           </div>
@@ -624,10 +635,10 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
           <div
             onMouseDown={handleMouseDown}
             style={{ transform: `translate3d(${dragPos?.x || 0}px, ${dragPos?.y || 0}px, 0)` }}
-            className="absolute left-0 right-0 top-full mt-2.5 z-50 bg-[#18181C]/50 backdrop-blur-xl border border-[#D4AF37]/40 rounded-2xl p-4 shadow-2xl space-y-3.5 animate-in fade-in slide-in-from-top-3 cursor-grab active:cursor-grabbing select-none"
+            className="absolute left-0 right-0 top-full mt-2.5 z-50 bg-[#18181C]/5 backdrop-blur-md border border-[#D4AF37]/30 rounded-2xl p-4 shadow-2xl space-y-3.5 animate-in fade-in slide-in-from-top-3 cursor-grab active:cursor-grabbing select-none"
           >
             {/* Header com Navegação e Período */}
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 border-b border-[#27272A] pb-3">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 border-b border-[#27272A]/40 pb-3">
               <div className="flex items-center space-x-2 text-xs text-[#A1A1AA]">
                 <span className="text-[#D4AF37] font-semibold">{getHeaderPeriodText()}</span>
                 <span>• Clique em um dia para filtrar os pedidos de reservas</span>
@@ -637,7 +648,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                 <button
                   type="button"
                   onClick={handlePrev}
-                  className="no-drag p-1.5 bg-[#111113] hover:bg-[#27272A] text-[#A1A1AA] hover:text-white border border-[#27272A] rounded-xl transition-all cursor-pointer"
+                  className="no-drag p-1.5 bg-[#111113]/10 hover:bg-[#27272A]/40 text-[#A1A1AA] hover:text-white border border-[#27272A]/40 rounded-xl transition-all cursor-pointer"
                   title="Período Anterior"
                 >
                   <ChevronLeft size={16} />
@@ -645,7 +656,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                 <button
                   type="button"
                   onClick={handleToday}
-                  className="no-drag flex items-center gap-1.5 px-3 py-1.5 bg-[#111113] hover:bg-[#27272A] text-xs font-semibold text-[#D4AF37] border border-[#27272A] rounded-xl transition-all cursor-pointer"
+                  className="no-drag flex items-center gap-1.5 px-3 py-1.5 bg-[#111113]/10 hover:bg-[#27272A]/40 text-xs font-semibold text-[#D4AF37] border border-[#27272A]/40 rounded-xl transition-all cursor-pointer"
                 >
                   <RotateCcw size={12} />
                   <span>Hoje</span>
@@ -653,7 +664,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                 <button
                   type="button"
                   onClick={handleNext}
-                  className="no-drag p-1.5 bg-[#111113] hover:bg-[#27272A] text-[#A1A1AA] hover:text-white border border-[#27272A] rounded-xl transition-all cursor-pointer"
+                  className="no-drag p-1.5 bg-[#111113]/10 hover:bg-[#27272A]/40 text-[#A1A1AA] hover:text-white border border-[#27272A]/40 rounded-xl transition-all cursor-pointer"
                   title="Próximo Período"
                 >
                   <ChevronRight size={16} />
@@ -661,7 +672,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsCalendarOpen(false)}
-                  className="no-drag p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/25 rounded-xl transition-all cursor-pointer ml-1"
+                  className="no-drag p-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/30 rounded-xl transition-all cursor-pointer ml-1"
                   title="Fechar Calendário"
                 >
                   <X size={15} />
@@ -670,10 +681,10 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
             </div>
 
             {/* Controller de Modo de Seleção de Datas */}
-            <div className="no-drag flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 bg-[#111113]/40 p-2.5 rounded-xl border border-[#27272A] text-xs">
+            <div className="no-drag flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 bg-[#111113]/10 p-2.5 rounded-xl border border-[#27272A]/40 text-xs">
               <div className="flex items-center space-x-2 flex-wrap gap-1.5">
                 <span className="text-[#A1A1AA] font-semibold text-[10px] uppercase tracking-wider">Modo de Seleção:</span>
-                <div className="flex items-center p-0.5 bg-[#0A0A0B] border border-[#27272A] rounded-lg text-[11px] gap-1 shadow-inner">
+                <div className="flex items-center p-0.5 bg-[#0A0A0B]/20 border border-[#27272A]/40 rounded-lg text-[11px] gap-1">
                   <button
                     type="button"
                     onClick={() => {
@@ -684,7 +695,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                     className={`no-drag px-2.5 py-1 rounded-md transition-all cursor-pointer font-semibold ${
                       selectionMode === 'INDIVIDUAL'
                         ? 'bg-[#D4AF37] text-[#0A0A0B]'
-                        : 'text-[#71717A] hover:text-white hover:bg-[#18181B]'
+                        : 'text-[#71717A] hover:text-white hover:bg-[#18181B]/30'
                     }`}
                   >
                     Múltiplos Individuais
@@ -700,10 +711,10 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                     className={`no-drag px-2.5 py-1 rounded-md transition-all cursor-pointer font-semibold ${
                       selectionMode === 'INTERVALO'
                         ? 'bg-[#D4AF37] text-[#0A0A0B]'
-                        : 'text-[#71717A] hover:text-white hover:bg-[#18181B]'
+                        : 'text-[#71717A] hover:text-white hover:bg-[#18181B]/30'
                     }`}
                   >
-                    Intervalo Sequencial
+                    Intervalo Sequencial (Até 7 dias)
                   </button>
                 </div>
               </div>
@@ -720,7 +731,7 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                       setRangeStart(null);
                       setRangeEnd(null);
                     }}
-                    className="no-drag text-[10px] text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 px-2 py-0.5 rounded-lg font-semibold transition-all cursor-pointer"
+                    className="no-drag text-[10px] text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 px-2 py-0.5 rounded-lg font-semibold transition-all cursor-pointer"
                   >
                     Limpar Seleção
                   </button>
@@ -769,13 +780,13 @@ export const ReservasView: React.FC<ReservasViewProps> = ({
                     className={`no-drag group relative flex flex-col items-center justify-center p-1 sm:p-1.5 rounded-xl border text-center transition-all cursor-pointer select-none min-h-[42px] ${
                       isSelected
                         ? isRangeMiddle
-                          ? 'bg-[#D4AF37]/15 border-[#D4AF37]/40 text-[#D4AF37] shadow-sm'
-                          : 'bg-[#18181B] border-[#D4AF37] ring-2 ring-[#D4AF37]/30 shadow-md shadow-[#D4AF37]/10'
+                          ? 'bg-[#D4AF37]/20 border-[#D4AF37]/50 text-[#D4AF37] shadow-sm'
+                          : 'bg-[#D4AF37]/20 border-[#D4AF37] ring-2 ring-[#D4AF37]/40 shadow-md shadow-[#D4AF37]/10'
                         : isDayToday
-                        ? 'bg-[#18181B] border-[#D4AF37]/70 shadow-sm'
+                        ? 'bg-[#18181B]/10 border-[#D4AF37]/70 shadow-sm'
                         : !isCurrentMonth
-                        ? 'bg-[#0A0A0B]/40 border-[#27272A]/30 opacity-35 hover:opacity-100'
-                        : 'bg-[#0A0A0B] border-[#27272A] hover:border-[#3F3F46] hover:bg-[#18181B]/60'
+                        ? 'bg-[#0A0A0B]/10 border-[#27272A]/20 opacity-30 hover:opacity-100'
+                        : 'bg-[#0A0A0B]/10 border-[#27272A]/40 hover:border-[#3F3F46] hover:bg-[#18181B]/30'
                     }`}
                   >
                     {modoCalendario !== 'MENSAL' && (
